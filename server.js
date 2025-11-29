@@ -1,8 +1,8 @@
-// server.js
+// server.js - Complete & Updated for Render/Neon/Stripe
 
-// 1. Imports et Initialisation
+// 1. Imports
+require('dotenv').config(); // Load .env if running locally
 const express = require('express');
-// La clé secrète STRIPE_SECRET_KEY est lue depuis les variables d'environnement de Railway
 const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY); 
 const { Pool } = require('pg');
 const cors = require('cors');
@@ -10,114 +10,150 @@ const cors = require('cors');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Configuration de la connexion à la base de données PostgreSQL
-// DATABASE_URL est injectée automatiquement par Railway
+// 2. Database Connection (Neon/PostgreSQL)
 const pool = new Pool({
     connectionString: process.env.DATABASE_URL,
-    // Nécessaire pour les connexions sécurisées (SSL) sur Railway
-    ssl: { rejectUnauthorized: false } 
+    ssl: { rejectUnauthorized: false } // Required for Neon/Render
 });
 
-// --- Configuration CORS (Sécurité) ---
-// Liste blanche des domaines/origines autorisés à appeler cette API
-const allowedOrigins = [
-    process.env.CLIENT_DOMAIN, // Votre domaine public Railway pour les redirections
-    // L'ID de votre extension Chrome (REMINDER: À RENSEIGNER DANS LES VARIABLES RAILWAY)
-    process.env.CHROME_EXTENSION_ID 
-];
+// 3. CORS Configuration
+app.use(cors());
 
-app.use(cors({
-    origin: (origin, callback) => {
-        // Autorise les requêtes sans 'origin' (ex: Service Worker) et les origines de confiance
-        if (!origin || allowedOrigins.includes(origin) || origin.startsWith('chrome-extension://')) {
-            callback(null, true);
-        } else {
-            callback(new Error('Not allowed by CORS'));
+// ===============================================
+// ROUTE 1: STRIPE WEBHOOK (Must be defined BEFORE express.json)
+// ===============================================
+// This triggers when Stripe tells us "Payment Successful"
+app.post('/webhook', express.raw({type: 'application/json'}), async (req, res) => {
+    const sig = req.headers['stripe-signature'];
+    const endpointSecret = process.env.STRIPE_WEBHOOK_SECRET;
+
+    let event;
+
+    try {
+        // Verify that the request actually came from Stripe
+        event = stripe.webhooks.constructEvent(req.body, sig, endpointSecret);
+    } catch (err) {
+        console.error(`⚠️  Webhook Signature Verification Failed: ${err.message}`);
+        return res.status(400).send(`Webhook Error: ${err.message}`);
+    }
+
+    // Handle the event
+    if (event.type === 'checkout.session.completed') {
+        const session = event.data.object;
+        
+        // Retrieve data sent from payment.js
+        const googleId = session.metadata.google_id;
+        const customerEmail = session.customer_details.email;
+        const stripeCustomerId = session.customer;
+
+        console.log(`💰 Payment received for User: ${googleId} (${customerEmail})`);
+
+        try {
+            // Save/Update License in Neon DB
+            // This SQL works for both new users (INSERT) and existing users (UPDATE)
+            const query = `
+                INSERT INTO users (google_id, email, is_premium, stripe_customer_id, updated_at)
+                VALUES ($1, $2, true, $3, NOW())
+                ON CONFLICT (google_id) 
+                DO UPDATE SET is_premium = true, stripe_customer_id = $3, updated_at = NOW();
+            `;
+            
+            await pool.query(query, [googleId, customerEmail, stripeCustomerId]);
+            console.log("✅ Database updated: License Active");
+            
+        } catch (dbError) {
+            console.error("❌ Database Error:", dbError);
         }
     }
-}));
+    // Handle Subscription Cancellation (Optional but recommended)
+    else if (event.type === 'customer.subscription.deleted') {
+        const session = event.data.object;
+        const stripeCustomerId = session.customer;
+        
+        try {
+            // Revoke license
+            await pool.query('UPDATE users SET is_premium = false WHERE stripe_customer_id = $1', [stripeCustomerId]);
+            console.log("⚠️ Subscription deleted. License revoked.");
+        } catch (err) {
+            console.error("Error revoking license:", err);
+        }
+    }
 
+    res.json({received: true});
+});
 
-// Middleware pour analyser les corps JSON entrants (sauf pour le webhook qui est géré séparément)
-app.use(express.json()); 
+// 4. Global Middleware (JSON Parser for other routes)
+app.use(express.json());
 
 
 // ===============================================
-// ROUTES API - DÉFINITION
+// ROUTE 2: CREATE CHECKOUT SESSION
 // ===============================================
+app.post('/api/create-checkout-session', async (req, res) => {
+    // We accept 'priceId' directly from payment.js to be flexible
+    const { priceId, userId, successUrl, cancelUrl } = req.body; 
 
-// Fonction utilitaire pour trouver le Price ID Stripe
-// REMPLACER price_VOTRE_ID_... par vos ID réels depuis Stripe
-function getPriceId(plan) {
-    switch (plan) {
-        case 'Plus':
-            return 'price_VOTRE_ID_PRICE_PLUS'; 
-        case 'Pro':
-            return 'price_VOTRE_ID_PRICE_PRO'; 
-        default:
-            return null;
+    if (!priceId || !userId) {
+        return res.status(400).json({ error: "Missing priceId or userId" });
     }
-}
-
-
-// ROUTE 1 : Création de Session de Paiement (Appelée par l'extension)
-app.post('/api/create-checkout', async (req, res) => {
-    // 1. Récupération des données envoyées par l'extension
-    const { plan, googleUserId } = req.body; 
-
-    if (!plan || !googleUserId) {
-        return res.status(400).json({ error: "Missing plan or user ID" });
-    }
-
-    const priceId = getPriceId(plan);
-    if (!priceId) {
-        return res.status(400).json({ error: "Invalid plan specified" });
-    }
-
-    // L'URL de succès et d'annulation utilise le domaine public Railway
-    const domain = process.env.CLIENT_DOMAIN;
-    const successUrl = `${domain}/payment-success.html?session_id={CHECKOUT_SESSION_ID}`;
-    const cancelUrl = `${domain}/payment-cancel.html`;
 
     try {
         const session = await stripe.checkout.sessions.create({
             mode: 'subscription',
+            payment_method_types: ['card'],
             line_items: [{ price: priceId, quantity: 1 }],
             
-            // Stocke l'ID utilisateur Google dans la session Stripe
-            client_reference_id: googleUserId, 
+            // Critical: Pass User ID to Webhook
+            metadata: {
+                google_id: userId
+            },
             
-            // URL de redirection
-            success_url: successUrl,
-            cancel_url: cancelUrl,
-            
-            payment_method_types: ['card', 'paypal'], 
+            // URLs where user goes after payment
+            success_url: successUrl || 'https://google.com?payment_success=true',
+            cancel_url: cancelUrl || 'https://google.com?payment_cancelled=true',
         });
 
-        // Renvoyer l'URL de paiement à l'extension
-        res.status(200).json({ checkoutUrl: session.url });
+        // Send the URL back to the extension
+        res.json({ url: session.url });
 
     } catch (error) {
         console.error("Stripe Checkout Error:", error);
-        res.status(500).json({ error: "Failed to create checkout session" });
+        res.status(500).json({ error: error.message });
     }
 });
 
-// ROUTE 2 : Webhook Stripe (Sera implémentée à l'étape suivante)
-// Note: Le middleware express.json() ne doit PAS être utilisé ici, 
-// nous devons lire le buffer brut pour la validation.
 
-// app.post('/api/stripe-webhook', express.raw({type: 'application/json'}), async (req, res) => {
-//     // ... Logique de vérification et de mise à jour de licence ...
-// });
+// ===============================================
+// ROUTE 3: CHECK LICENSE STATUS
+// ===============================================
+app.get('/api/check-license', async (req, res) => {
+    const { user_id } = req.query;
 
-// ROUTE 3 : Vérification de Licence (Sera implémentée à l'étape suivante)
-// app.get('/api/check-license', async (req, res) => {
-//     // ... Logique de lecture de licence dans la DB ...
-// });
+    if (!user_id) {
+        return res.status(400).json({ error: "User ID required" });
+    }
 
+    try {
+        const result = await pool.query('SELECT is_premium, email FROM users WHERE google_id = $1', [user_id]);
+        
+        if (result.rows.length > 0) {
+            const user = result.rows[0];
+            return res.json({ 
+                is_premium: user.is_premium, 
+                plan: user.is_premium ? 'Premium' : 'Free'
+            });
+        } else {
+            // User not found in DB = Free User
+            return res.json({ is_premium: false, plan: 'Free' });
+        }
 
-// 4. Démarrage du serveur
+    } catch (err) {
+        console.error("Database Error:", err);
+        res.status(500).json({ error: "Internal Server Error" });
+    }
+});
+
+// 5. Start Server
 app.listen(PORT, () => {
     console.log(`Server running on port ${PORT}`);
 });
