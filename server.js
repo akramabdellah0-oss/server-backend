@@ -1,6 +1,10 @@
 // server.js
 
-require('dotenv').config();
+// Load .env file only in development
+if (process.env.NODE_ENV !== 'production') {
+  require('dotenv').config();
+}
+
 const express = require('express');
 const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY); 
 const { Pool } = require('pg');
