@@ -44,8 +44,8 @@ const sendCodeLimiter = rateLimit({
 const transporter = nodemailer.createTransport({
     service: 'gmail',
     auth: {
-        user: 'akramabdellah0@gmail.com',
-        pass: process.env.GMAIL_PASSWORD, // Use environment variable
+        user: GMAIL_USER,
+        pass: GMAIL_APP_PASS,
     },
 });
 
