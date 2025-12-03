@@ -64,6 +64,12 @@ app.post('/api/send-verification-code', sendCodeLimiter, async (req, res) => {
         return res.status(400).json({ error: 'Email is required' });
     }
 
+    // Validate email format
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email)) {
+        return res.status(400).json({ error: 'Invalid email format' });
+    }
+
     // Generate a 6-digit code
     const code = crypto.randomInt(100000, 999999).toString();
 
@@ -71,18 +77,44 @@ app.post('/api/send-verification-code', sendCodeLimiter, async (req, res) => {
     verificationCodes[email] = { code, expiresAt: Date.now() + 10 * 60 * 1000 };
 
     try {
-        await transporter.sendMail({
+        console.log(`📧 Attempting to send verification code to ${email}...`);
+
+        const mailOptions = {
             from: `"Autofill App" <${GMAIL_USER}>`,
             to: email,
             subject: 'Your Verification Code',
             text: `Your verification code is: ${code}`,
-        });
+        };
+
+        console.log('📧 Mail options:', { from: mailOptions.from, to: mailOptions.to, subject: mailOptions.subject });
+
+        const info = await transporter.sendMail(mailOptions);
 
         console.log(`✅ Verification code sent to ${email}: ${code}`);
+        console.log('📧 Email sent successfully:', info.messageId);
+
         res.json({ success: true, message: 'Verification code sent.' });
     } catch (error) {
         console.error('❌ Error sending email:', error);
-        res.status(500).json({ error: 'Failed to send verification code.' });
+        console.error('❌ Error details:', {
+            message: error.message,
+            code: error.code,
+            command: error.command,
+            errno: error.errno,
+            syscall: error.syscall
+        });
+
+        // Provide more specific error messages
+        let errorMessage = 'Failed to send verification code.';
+        if (error.code === 'EAUTH') {
+            errorMessage = 'Email authentication failed. Check Gmail credentials.';
+        } else if (error.code === 'ECONNREFUSED') {
+            errorMessage = 'Cannot connect to Gmail SMTP server.';
+        } else if (error.code === 'ETIMEDOUT') {
+            errorMessage = 'Connection to Gmail SMTP server timed out.';
+        }
+
+        res.status(500).json({ error: errorMessage, details: error.message });
     }
 });
 
