@@ -1,5 +1,7 @@
 // Import dependencies
 const express = require('express');
+const bodyParser = require('body-parser'); // 1. Importer body-parser
+const Stripe = require('stripe'); // 1. Importer Stripe
 const sgMail = require('@sendgrid/mail'); // 🔴 REMPLACER nodemailer
 const crypto = require('crypto');
 const rateLimit = require('express-rate-limit');
@@ -14,6 +16,11 @@ const app = express();
 // Tell Express to trust the proxy (Render Load Balancer) so rate-limiter gets the real IP
 // This fixes the "ValidationError: The 'X-Forwarded-For' header is set..." error.
 app.set('trust proxy', 1);
+
+// --- WEBHOOK PARSING ---
+// Le webhook de Stripe a besoin du "raw body", donc nous utilisons bodyParser.raw
+// pour cet endpoint spécifique, AVANT `express.json()`.
+app.post('/api/stripe-webhook', bodyParser.raw({type: 'application/json'}), handleStripeWebhook);
 
 // Middlewares
 app.use(cors({ origin: '*' })); // Allow all origins for development. Restrict in production.
@@ -32,6 +39,17 @@ if (SENDGRID_API_KEY) {
 } else {
     console.warn('⚠️  SendGrid API key not found. Email functionality will be disabled.');
     console.log('ℹ️  To enable emails, add SENDGRID_API_KEY to environment variables');
+}
+
+// --- Stripe Configuration ---
+const STRIPE_SECRET_KEY = process.env.STRIPE_SECRET_KEY;
+const STRIPE_WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET;
+let stripe;
+if (STRIPE_SECRET_KEY) {
+    stripe = new Stripe(STRIPE_SECRET_KEY);
+    console.log('✅ Stripe API key configured.');
+} else {
+    console.warn('⚠️  Stripe API key not found. Payment functionality will be disabled.');
 }
 
 // Rate limiter to prevent abuse
@@ -175,42 +193,92 @@ app.get('/api/check-license', (req, res) => {
 
 /**
  * 4. Create Checkout Session (Called by Pricing.tsx)
- * NOTE: This is a MOCK implementation for demonstration.
- * In production, you would use the 'stripe' library here.
+ * This is the REAL implementation using Stripe.
  */
-app.post('/api/create-checkout-session', (req, res) => {
+app.post('/api/create-checkout-session', async (req, res) => {
     const { priceId, userId, successUrl, cancelUrl } = req.body;
+    try {
+        // Create a new checkout session with Stripe
+        const session = await stripe.checkout.sessions.create({
+            payment_method_types: ['card'],
+            line_items: [
+                {
+                    price: priceId,
+                    quantity: 1,
+                },
+            ],
+            mode: 'subscription',
+            success_url: successUrl, // URL de redirection en cas de succès
+            cancel_url: cancelUrl,   // URL de redirection en cas d'annulation
+            // Associer la session à l'e-mail de l'utilisateur
+            customer_email: userId,
+        });
 
-    if (!userId || !priceId) {
-        return res.status(400).json({ error: 'Missing userId or priceId' });
+        console.log(`✅ Stripe session created: ${session.id}`);
+        // Renvoyer l'URL de la session de paiement au client
+        res.json({ url: session.url });
+
+    } catch (error) {
+        console.error('❌ Stripe Error:', error.message);
+        res.status(500).json({ error: 'Failed to create payment session.' });
+    }
+});
+
+/**
+ * 5. Stripe Webhook Handler
+ * Stripe appelle cet endpoint pour notifier des événements (ex: paiement réussi).
+ */
+async function handleStripeWebhook(req, res) {
+    if (!STRIPE_WEBHOOK_SECRET) {
+        console.error('❌ Stripe webhook secret not configured.');
+        return res.status(400).send('Webhook Error: Missing secret.');
     }
 
-    console.log(`💰 Creating checkout for ${userId} (${priceId})`);
+    const sig = req.headers['stripe-signature'];
+    let event;
 
-    // --- MOCK PAYMENT LOGIC ---
-    // Since we don't have your Stripe Secret Key, we simulate a successful payment.
-    // In a real app, you'd create a Stripe session here.
-    
-    // We instantly upgrade the user in memory for this demo
-    userSubscriptions[userId] = {
-        isPremium: true,
-        plan: priceId.includes('pro') ? 'Pro' : 'Plus' // Simple guess based on ID
-    };
+    try {
+        event = stripe.webhooks.constructEvent(req.body, sig, STRIPE_WEBHOOK_SECRET);
+    } catch (err) {
+        console.error(`❌ Webhook signature verification failed:`, err.message);
+        return res.status(400).send(`Webhook Error: ${err.message}`);
+    }
 
-    console.log(`✅ [MOCK] Upgraded ${userId} to Premium`);
+    // Gérer l'événement
+    switch (event.type) {
+        case 'checkout.session.completed':
+            const session = event.data.object;
+            console.log('✅ Checkout session completed:', session.id);
+            
+            const userEmail = session.customer_email;
+            if (userEmail) {
+                // Mettre à jour le statut de l'utilisateur dans notre "base de données"
+                userSubscriptions[userEmail] = {
+                    isPremium: true,
+                    plan: 'Pro' // Vous pouvez obtenir le plan exact depuis la session
+                };
+                console.log(`🌟 Subscription ACTIVATED for ${userEmail}`);
+            }
+            break;
+        // ... gérer d'autres événements si nécessaire
+        default:
+            console.log(`🔔 Unhandled event type ${event.type}`);
+    }
 
-    // Redirect the frontend directly to the success URL
-    res.json({ url: successUrl });
-});
+    // Renvoyer une réponse 200 pour accuser réception à Stripe
+    res.json({ received: true });
+}
 
 // Start the server
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
     console.log(`🚀 Server running on port ${PORT}`);
     console.log(`📧 Email service: ${SENDGRID_API_KEY ? 'SendGrid (API Ready)' : 'Disabled - No API Key'}`);
-    console.log(`🔗 Endpoints:`);
+    console.log(`💳 Payment service: ${STRIPE_SECRET_KEY ? 'Stripe (Ready)' : 'Disabled - No API Key'}`);
+    console.log(`� Endpoints:`);
     console.log(`   POST /api/send-verification-code`);
     console.log(`   POST /api/verify-code`);
     console.log(`   GET  /api/check-license`);
     console.log(`   POST /api/create-checkout-session`);
+    console.log(`   POST /api/stripe-webhook`);
 });
