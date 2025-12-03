@@ -10,6 +10,11 @@ require('dotenv').config();
 
 const app = express();
 
+// --- FIX FOR RENDER/LOAD BALANCERS ---
+// Tell Express to trust the proxy (Render Load Balancer) so rate-limiter gets the real IP
+// This fixes the "ValidationError: The 'X-Forwarded-For' header is set..." error.
+app.set('trust proxy', 1);
+
 // Middlewares
 app.use(cors({ origin: '*' })); // Allow all origins for development. Restrict in production.
 app.use(express.json());
