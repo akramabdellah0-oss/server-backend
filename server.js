@@ -1,6 +1,6 @@
 // Import dependencies
 const express = require('express');
-const nodemailer = require('nodemailer');
+const sgMail = require('@sendgrid/mail'); // 🔴 REMPLACER nodemailer
 const crypto = require('crypto');
 const rateLimit = require('express-rate-limit');
 const cors = require('cors');
@@ -26,6 +26,13 @@ const userSubscriptions = {}; // Stores license status: { 'email@example.com': {
 
 // --- SendGrid Configuration ---
 const SENDGRID_API_KEY = process.env.SENDGRID_API_KEY;
+if (SENDGRID_API_KEY) {
+    sgMail.setApiKey(SENDGRID_API_KEY);
+    console.log('✅ SendGrid API key configured.');
+} else {
+    console.warn('⚠️  SendGrid API key not found. Email functionality will be disabled.');
+    console.log('ℹ️  To enable emails, add SENDGRID_API_KEY to environment variables');
+}
 
 // Rate limiter to prevent abuse
 const sendCodeLimiter = rateLimit({
@@ -33,42 +40,6 @@ const sendCodeLimiter = rateLimit({
     max: 5, // Limit each IP to 5 requests per windowMs
     message: "Too many requests, please try again later.",
 });
-
-// ✅ SMTP Transporter (SendGrid) - FIXES THE TIMEOUT ISSUE
-let transporter;
-
-// Only create transporter if API key exists
-if (SENDGRID_API_KEY) {
-    transporter = nodemailer.createTransport({
-        host: 'smtp.sendgrid.net',
-        port: 587, // Use 587 for STARTTLS (not 465)
-        secure: false, // true for 465, false for other ports
-        auth: {
-            user: 'apikey', // ← THIS IS LITERALLY THE WORD 'apikey' (not your username)
-            pass: SENDGRID_API_KEY // Your actual SendGrid API key
-        },
-        // Optional: Increase timeouts for reliability
-        connectionTimeout: 60000, // 60 seconds
-        socketTimeout: 60000,
-        greetingTimeout: 30000
-    });
-
-    // Test connection on startup
-    transporter.verify(function(error, success) {
-        if (error) {
-            console.error('❌ SendGrid connection failed:', error.message);
-            console.log('💡 Tips:');
-            console.log('   1. Make sure SENDGRID_API_KEY is correct');
-            console.log('   2. Check your API key has "Mail Send" permission');
-            console.log('   3. Verify in SendGrid dashboard: Settings → API Keys');
-        } else {
-            console.log('✅ SendGrid SMTP server is ready to send emails');
-        }
-    });
-} else {
-    console.warn('⚠️  SendGrid API key not found. Email functionality will be disabled.');
-    console.log('ℹ️  To enable emails, add SENDGRID_API_KEY to environment variables');
-}
 
 // --- API ENDPOINTS ---
 
@@ -95,7 +66,7 @@ app.post('/api/send-verification-code', sendCodeLimiter, async (req, res) => {
     verificationCodes[email] = { code, expiresAt: Date.now() + 10 * 60 * 1000 };
 
     // Check if SendGrid is configured
-    if (!transporter) {
+    if (!SENDGRID_API_KEY) {
         console.warn(`⚠️  SendGrid not configured. Mock code for ${email}: ${code}`);
         // In development, you can return the code for testing
         if (process.env.NODE_ENV !== 'production') {
@@ -116,7 +87,7 @@ app.post('/api/send-verification-code', sendCodeLimiter, async (req, res) => {
 
         const mailOptions = {
             // IMPORTANT: Use a verified sender email in SendGrid
-            from: process.env.EMAIL_FROM || '"Autofill App" <noreply@autofillapp.com>',
+            from: { name: 'Autofill App', email: process.env.EMAIL_FROM || 'noreply@yourverifieddomain.com' },
             to: email,
             subject: 'Your Verification Code',
             text: `Your verification code is: ${code}\n\nThis code will expire in 10 minutes.`,
@@ -137,26 +108,20 @@ app.post('/api/send-verification-code', sendCodeLimiter, async (req, res) => {
 
         console.log('📧 Sending via SendGrid to:', email);
 
-        const info = await transporter.sendMail(mailOptions);
+        // Utiliser sgMail.send() au lieu de transporter.sendMail()
+        await sgMail.send(mailOptions);
 
         console.log(`✅ Verification code sent to ${email}`);
-        console.log('📧 SendGrid Message ID:', info.messageId);
 
         res.json({ success: true, message: 'Verification code sent.' });
     } catch (error) {
-        console.error('❌ SendGrid Error:', error.message);
-        
-        // User-friendly error messages
-        let errorMessage = 'Failed to send verification code. Please try again.';
-        
-        if (error.code === 'EAUTH') {
-            errorMessage = 'Email service authentication failed.';
-        } else if (error.code === 'EENVELOPE') {
-            errorMessage = 'Invalid email address.';
+        console.error('❌ SendGrid API Error:', error.message);
+        if (error.response) {
+            console.error(error.response.body);
         }
 
         res.status(500).json({ 
-            error: errorMessage,
+            error: 'Failed to send verification code. Please try again.',
             details: process.env.NODE_ENV !== 'production' ? error.message : undefined
         });
     }
@@ -242,7 +207,7 @@ app.post('/api/create-checkout-session', (req, res) => {
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
     console.log(`🚀 Server running on port ${PORT}`);
-    console.log(`📧 Email service: ${SENDGRID_API_KEY ? 'SendGrid (Ready)' : 'Disabled - No API Key'}`);
+    console.log(`📧 Email service: ${SENDGRID_API_KEY ? 'SendGrid (API Ready)' : 'Disabled - No API Key'}`);
     console.log(`🔗 Endpoints:`);
     console.log(`   POST /api/send-verification-code`);
     console.log(`   POST /api/verify-code`);
