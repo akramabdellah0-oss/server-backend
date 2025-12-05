@@ -456,9 +456,10 @@ app.get('/payment-success', (req, res) => {
     <script>
         function openExtension() {
             // Try to open the extension
-            if ('${extension_id}') {
+            const extensionId = '${extension_id}';
+            if (extensionId && extensionId !== '\${extension_id}') {
                 // Create the extension URL
-                const extensionUrl = 'chrome-extension://${extension_id}/options.html?payment_status=success';
+                const extensionUrl = 'chrome-extension://' + extensionId + '/options.html?payment_status=success';
                 
                 // Try to open in a new tab
                 window.open(extensionUrl, '_blank');
@@ -472,6 +473,9 @@ app.get('/payment-success', (req, res) => {
         
         // Auto-try to open after 2 seconds
         setTimeout(openExtension, 2000);
+        
+        // Also try to open immediately
+        openExtension();
     </script>
 </body>
 </html>
@@ -519,9 +523,16 @@ app.get('/payment-cancelled', (req, res) => {
     
     <script>
         function openExtension() {
-            if ('${extension_id}') {
-                const extensionUrl = 'chrome-extension://${extension_id}/options.html?payment_status=cancelled';
+            // Try to open the extension
+            const extensionId = '${extension_id}';
+            if (extensionId && extensionId !== '\${extension_id}') {
+                // Create the extension URL
+                const extensionUrl = 'chrome-extension://' + extensionId + '/options.html?payment_status=cancelled';
+                
+                // Try to open in a new tab
                 window.open(extensionUrl, '_blank');
+                
+                // Show confirmation
                 alert('Returning to extension... If it doesn\'t open automatically, please open your Chrome extension manually.');
             } else {
                 alert('Extension ID not found. Please open your Chrome extension manually.');
@@ -530,6 +541,9 @@ app.get('/payment-cancelled', (req, res) => {
         
         // Auto-try to open after 2 seconds
         setTimeout(openExtension, 2000);
+        
+        // Also try to open immediately
+        openExtension();
     </script>
 </body>
 </html>
