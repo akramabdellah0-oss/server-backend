@@ -30,6 +30,7 @@ app.use(express.json());
 // Note: In production, replace these with a real database (MongoDB, PostgreSQL, etc.)
 const verificationCodes = {};
 const userSubscriptions = {}; // Stores license status: { 'email@example.com': { isPremium: true, plan: 'Pro' } }
+const sharedRules = {}; // Stores shared rules: { shareId: { fromEmail, toEmail, rule, expiresAt, used } }
 
 // --- SendGrid Configuration ---
 const SENDGRID_API_KEY = process.env.SENDGRID_API_KEY;
@@ -269,6 +270,121 @@ async function handleStripeWebhook(req, res) {
     res.json({ received: true });
 }
 
+// --- RULE SHARING ENDPOINTS ---
+
+/**
+ * 6. Share a rule with another user
+ */
+app.post('/api/share-rule', (req, res) => {
+    const { fromEmail, toEmail, rule, expireMinutes } = req.body;
+
+    if (!fromEmail || !toEmail || !rule) {
+        return res.status(400).json({ error: 'fromEmail, toEmail, and rule are required' });
+    }
+
+    // Validate emails
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(fromEmail) || !emailRegex.test(toEmail)) {
+        return res.status(400).json({ error: 'Invalid email format' });
+    }
+
+    // Generate unique share ID
+    const shareId = crypto.randomBytes(16).toString('hex');
+    const expiresAt = Date.now() + ((expireMinutes || 60) * 60 * 1000); // Default 1 hour
+
+    // Store the shared rule
+    sharedRules[shareId] = {
+        fromEmail,
+        toEmail,
+        rule,
+        expiresAt,
+        used: false,
+        createdAt: Date.now()
+    };
+
+    console.log(`🔗 Rule shared from ${fromEmail} to ${toEmail}, ID: ${shareId}`);
+
+    res.json({ 
+        success: true, 
+        shareId,
+        message: `Rule shared with ${toEmail}`,
+        expiresIn: expireMinutes || 60
+    });
+});
+
+/**
+ * 7. Check for shared rules for a user
+ */
+app.get('/api/check-shared-rules/:email', (req, res) => {
+    const { email } = req.params;
+
+    if (!email) {
+        return res.status(400).json({ error: 'Email is required' });
+    }
+
+    const now = Date.now();
+    const userShares = [];
+
+    // Find all active shares for this user
+    for (const [shareId, share] of Object.entries(sharedRules)) {
+        if (share.toEmail === email && !share.used && share.expiresAt > now) {
+            userShares.push({
+                shareId,
+                fromEmail: share.fromEmail,
+                rule: share.rule,
+                createdAt: share.createdAt,
+                expiresAt: share.expiresAt
+            });
+        }
+    }
+
+    console.log(`📬 ${userShares.length} shared rule(s) found for ${email}`);
+
+    res.json({ 
+        success: true, 
+        shares: userShares,
+        count: userShares.length
+    });
+});
+
+/**
+ * 8. Mark a shared rule as used
+ */
+app.post('/api/mark-rule-used/:shareId', (req, res) => {
+    const { shareId } = req.params;
+
+    if (!sharedRules[shareId]) {
+        return res.status(404).json({ error: 'Share not found' });
+    }
+
+    sharedRules[shareId].used = true;
+    console.log(`✅ Share ${shareId} marked as used`);
+
+    res.json({ success: true, message: 'Rule marked as used' });
+});
+
+/**
+ * 9. Delete expired shares (cleanup job)
+ */
+function cleanupExpiredShares() {
+    const now = Date.now();
+    let cleaned = 0;
+
+    for (const [shareId, share] of Object.entries(sharedRules)) {
+        if (share.expiresAt < now || share.used) {
+            delete sharedRules[shareId];
+            cleaned++;
+        }
+    }
+
+    if (cleaned > 0) {
+        console.log(`🧹 Cleaned up ${cleaned} expired/used shares`);
+    }
+}
+
+// Run cleanup every 10 minutes
+setInterval(cleanupExpiredShares, 10 * 60 * 1000);
+
 // Start the server
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
@@ -281,4 +397,7 @@ app.listen(PORT, () => {
     console.log(`   GET  /api/check-license`);
     console.log(`   POST /api/create-checkout-session`);
     console.log(`   POST /api/stripe-webhook`);
+    console.log(`   POST /api/share-rule`);
+    console.log(`   GET  /api/check-shared-rules/:email`);
+    console.log(`   POST /api/mark-rule-used/:shareId`);
 });
