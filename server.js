@@ -180,16 +180,27 @@ app.post('/api/verify-code', (req, res) => {
 app.get('/api/check-license', (req, res) => {
     const { user_id } = req.query; // This is the email
     
-    if (!user_id) return res.status(400).json({ error: 'User ID required' });
+    console.log('🎫 License check request for user:', user_id);
+    
+    if (!user_id) {
+        console.log('❌ No user_id provided');
+        return res.status(400).json({ error: 'User ID required' });
+    }
 
     const user = userSubscriptions[user_id];
+    
+    console.log('👤 User subscription data:', user);
 
     if (user && user.isPremium) {
-        return res.json({ is_premium: true, plan: user.plan || 'Pro' });
+        const planData = { is_premium: true, plan: user.plan || 'Pro' };
+        console.log('✅ Returning premium plan:', planData);
+        return res.json(planData);
     }
 
     // Default to free
-    return res.json({ is_premium: false, plan: 'Free' });
+    const freeData = { is_premium: false, plan: 'Free' };
+    console.log('🆓 Returning free plan:', freeData);
+    return res.json(freeData);
 });
 
 /**
@@ -252,17 +263,21 @@ async function handleStripeWebhook(req, res) {
             console.log('✅ Checkout session completed:', session.id);
             
             const userEmail = session.customer_email;
+            console.log('📧 Customer email from session:', userEmail);
+            
             if (userEmail) {
                 // Determine plan based on price ID
                 let planName = 'Pro'; // Default
                 if (session.line_items && session.line_items.data && session.line_items.data.length > 0) {
                     const priceId = session.line_items.data[0].price.id;
+                    console.log('💰 Price ID from session:', priceId);
                     // Map price IDs to plan names (you'll need to update these with your actual price IDs)
                     if (priceId === 'price_1SXINCJdBDLWAyB09C5II34Q') {
                         planName = 'Plus';
                     } else if (priceId === 'price_1SXIM2JdBDLWAyB0cVOcC25x') {
                         planName = 'Pro';
                     }
+                    console.log('🏷️ Determined plan name:', planName);
                 }
                 
                 // Mettre à jour le statut de l'utilisateur dans notre "base de données"
@@ -271,6 +286,7 @@ async function handleStripeWebhook(req, res) {
                     plan: planName
                 };
                 console.log(`🌟 Subscription ACTIVATED for ${userEmail} (${planName})`);
+                console.log('💾 Updated user subscriptions:', userSubscriptions);
             }
             break;
         // ... gérer d'autres événements si nécessaire
