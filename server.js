@@ -413,6 +413,129 @@ function cleanupExpiredShares() {
 // Run cleanup every 10 minutes
 setInterval(cleanupExpiredShares, 10 * 60 * 1000);
 
+// --- PAYMENT REDIRECT ENDPOINTS ---
+
+/**
+ * Handle successful payment redirect
+ */
+app.get('/payment-success', (req, res) => {
+    const { extension_id } = req.query;
+    console.log('💰 Payment success redirect for extension:', extension_id);
+    
+    // Serve a simple HTML page that redirects to the extension
+    res.send(`
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Payment Successful</title>
+    <meta charset="utf-8">
+    <style>
+        body { font-family: Arial, sans-serif; text-align: center; padding: 50px; background: #f0f8ff; }
+        .container { max-width: 600px; margin: 0 auto; background: white; padding: 30px; border-radius: 10px; box-shadow: 0 0 20px rgba(0,0,0,0.1); }
+        h1 { color: #28a745; }
+        .instructions { background: #e8f5e9; padding: 20px; border-radius: 5px; margin: 20px 0; }
+        button { background: #007bff; color: white; border: none; padding: 12px 24px; font-size: 16px; border-radius: 5px; cursor: pointer; }
+        button:hover { background: #0056b3; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>✅ Payment Successful!</h1>
+        <p>Your payment has been processed successfully.</p>
+        
+        <div class="instructions">
+            <h3>Next Steps:</h3>
+            <p>Please click the button below to open your extension and activate your premium features.</p>
+        </div>
+        
+        <button onclick="openExtension()">Open Extension</button>
+        
+        <p>If the button doesn't work, manually open your Chrome extension and refresh the options page.</p>
+    </div>
+    
+    <script>
+        function openExtension() {
+            // Try to open the extension
+            if ('${extension_id}') {
+                // Create the extension URL
+                const extensionUrl = 'chrome-extension://${extension_id}/options.html?payment_status=success';
+                
+                // Try to open in a new tab
+                window.open(extensionUrl, '_blank');
+                
+                // Show confirmation
+                alert('Opening extension... If it doesn\'t open automatically, please open your Chrome extension manually.');
+            } else {
+                alert('Extension ID not found. Please open your Chrome extension manually.');
+            }
+        }
+        
+        // Auto-try to open after 2 seconds
+        setTimeout(openExtension, 2000);
+    </script>
+</body>
+</html>
+    `);
+});
+
+/**
+ * Handle cancelled payment redirect
+ */
+app.get('/payment-cancelled', (req, res) => {
+    const { extension_id } = req.query;
+    console.log('❌ Payment cancelled for extension:', extension_id);
+    
+    // Serve a simple HTML page for cancelled payments
+    res.send(`
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Payment Cancelled</title>
+    <meta charset="utf-8">
+    <style>
+        body { font-family: Arial, sans-serif; text-align: center; padding: 50px; background: #fff5f5; }
+        .container { max-width: 600px; margin: 0 auto; background: white; padding: 30px; border-radius: 10px; box-shadow: 0 0 20px rgba(0,0,0,0.1); }
+        h1 { color: #dc3545; }
+        .instructions { background: #f8d7da; padding: 20px; border-radius: 5px; margin: 20px 0; }
+        button { background: #007bff; color: white; border: none; padding: 12px 24px; font-size: 16px; border-radius: 5px; cursor: pointer; }
+        button:hover { background: #0056b3; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>❌ Payment Cancelled</h1>
+        <p>Your payment was cancelled or not completed.</p>
+        
+        <div class="instructions">
+            <h3>You can still:</h3>
+            <p>• Try again with a different payment method</p>
+            <p>• Continue using the free version of the extension</p>
+        </div>
+        
+        <button onclick="openExtension()">Return to Extension</button>
+        
+        <p>If the button doesn't work, manually open your Chrome extension.</p>
+    </div>
+    
+    <script>
+        function openExtension() {
+            if ('${extension_id}') {
+                const extensionUrl = 'chrome-extension://${extension_id}/options.html?payment_status=cancelled';
+                window.open(extensionUrl, '_blank');
+                alert('Returning to extension... If it doesn\'t open automatically, please open your Chrome extension manually.');
+            } else {
+                alert('Extension ID not found. Please open your Chrome extension manually.');
+            }
+        }
+        
+        // Auto-try to open after 2 seconds
+        setTimeout(openExtension, 2000);
+    </script>
+</body>
+</html>
+    `);
+});
+
 // Start the server
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
@@ -428,4 +551,6 @@ app.listen(PORT, () => {
     console.log(`   POST /api/share-rule`);
     console.log(`   GET  /api/check-shared-rules/:email`);
     console.log(`   POST /api/mark-rule-used/:shareId`);
+    console.log(`   GET  /payment-success`);
+    console.log(`   GET  /payment-cancelled`);
 });
