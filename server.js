@@ -185,7 +185,7 @@ app.get('/api/check-license', (req, res) => {
     const user = userSubscriptions[user_id];
 
     if (user && user.isPremium) {
-        return res.json({ is_premium: true, plan: user.plan });
+        return res.json({ is_premium: true, plan: user.plan || 'Pro' });
     }
 
     // Default to free
@@ -253,12 +253,24 @@ async function handleStripeWebhook(req, res) {
             
             const userEmail = session.customer_email;
             if (userEmail) {
+                // Determine plan based on price ID
+                let planName = 'Pro'; // Default
+                if (session.line_items && session.line_items.data && session.line_items.data.length > 0) {
+                    const priceId = session.line_items.data[0].price.id;
+                    // Map price IDs to plan names (you'll need to update these with your actual price IDs)
+                    if (priceId === 'price_1SXINCJdBDLWAyB09C5II34Q') {
+                        planName = 'Plus';
+                    } else if (priceId === 'price_1SXIM2JdBDLWAyB0cVOcC25x') {
+                        planName = 'Pro';
+                    }
+                }
+                
                 // Mettre à jour le statut de l'utilisateur dans notre "base de données"
                 userSubscriptions[userEmail] = {
                     isPremium: true,
-                    plan: 'Pro' // Vous pouvez obtenir le plan exact depuis la session
+                    plan: planName
                 };
-                console.log(`🌟 Subscription ACTIVATED for ${userEmail}`);
+                console.log(`🌟 Subscription ACTIVATED for ${userEmail} (${planName})`);
             }
             break;
         // ... gérer d'autres événements si nécessaire
