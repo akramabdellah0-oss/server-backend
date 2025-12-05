@@ -465,7 +465,7 @@ app.get('/payment-success', (req, res) => {
                 const extensionUrl = 'chrome-extension://' + extensionId + '/options.html?payment_status=success';
                 
                 // Try to open in a new tab
-                window.open(extensionUrl, '_blank');
+                const newWindow = window.open(extensionUrl, '_blank');
                 
                 // Show confirmation
                 alert("Opening extension... If it doesn't open automatically, please open your Chrome extension manually.");
@@ -543,7 +543,7 @@ app.get('/payment-cancelled', (req, res) => {
                 const extensionUrl = 'chrome-extension://' + extensionId + '/options.html?payment_status=cancelled';
                 
                 // Try to open in a new tab
-                window.open(extensionUrl, '_blank');
+                const newWindow = window.open(extensionUrl, '_blank');
                 
                 // Show confirmation
                 alert("Returning to extension... If it doesn't open automatically, please open your Chrome extension manually.");
