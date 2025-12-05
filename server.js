@@ -448,16 +448,19 @@ app.get('/payment-success', (req, res) => {
             <p>Please click the button below to open your extension and activate your premium features.</p>
         </div>
         
-        <button onclick="openExtension()">Open Extension</button>
+        <button id="open-extension-btn">Open Extension</button>
         
         <p>If the button doesn't work, manually open your Chrome extension and refresh the options page.</p>
     </div>
     
     <script>
+        // Get extension ID from URL parameters
+        const urlParams = new URLSearchParams(window.location.search);
+        const extensionId = urlParams.get('extension_id');
+        
         function openExtension() {
             // Try to open the extension
-            const extensionId = '${extension_id}';
-            if (extensionId && extensionId !== '\${extension_id}') {
+            if (extensionId && extensionId !== '') {
                 // Create the extension URL
                 const extensionUrl = 'chrome-extension://' + extensionId + '/options.html?payment_status=success';
                 
@@ -471,11 +474,18 @@ app.get('/payment-success', (req, res) => {
             }
         }
         
+        // Add event listener to button
+        document.getElementById('open-extension-btn').addEventListener('click', openExtension);
+        
         // Auto-try to open after 2 seconds
         setTimeout(openExtension, 2000);
         
         // Also try to open immediately
-        openExtension();
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', openExtension);
+        } else {
+            openExtension();
+        }
     </script>
 </body>
 </html>
@@ -516,16 +526,19 @@ app.get('/payment-cancelled', (req, res) => {
             <p>• Continue using the free version of the extension</p>
         </div>
         
-        <button onclick="openExtension()">Return to Extension</button>
+        <button id="open-extension-btn">Return to Extension</button>
         
         <p>If the button doesn't work, manually open your Chrome extension.</p>
     </div>
     
     <script>
+        // Get extension ID from URL parameters
+        const urlParams = new URLSearchParams(window.location.search);
+        const extensionId = urlParams.get('extension_id');
+        
         function openExtension() {
             // Try to open the extension
-            const extensionId = '${extension_id}';
-            if (extensionId && extensionId !== '\${extension_id}') {
+            if (extensionId && extensionId !== '') {
                 // Create the extension URL
                 const extensionUrl = 'chrome-extension://' + extensionId + '/options.html?payment_status=cancelled';
                 
@@ -539,11 +552,18 @@ app.get('/payment-cancelled', (req, res) => {
             }
         }
         
+        // Add event listener to button
+        document.getElementById('open-extension-btn').addEventListener('click', openExtension);
+        
         // Auto-try to open after 2 seconds
         setTimeout(openExtension, 2000);
         
         // Also try to open immediately
-        openExtension();
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', openExtension);
+        } else {
+            openExtension();
+        }
     </script>
 </body>
 </html>
