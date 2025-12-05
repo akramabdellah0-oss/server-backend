@@ -461,14 +461,25 @@ app.get('/payment-success', (req, res) => {
         function openExtension() {
             // Try to open the extension
             if (extensionId && extensionId !== '') {
-                // Create the extension URL
-                const extensionUrl = 'chrome-extension://' + extensionId + '/options.html?payment_status=success';
+                // Step 1: Process payment with parameter
+                const paymentUrl = 'chrome-extension://' + extensionId + '/options.html?payment_status=success';
                 
                 // Try to open in a new tab
-                const newWindow = window.open(extensionUrl, '_blank');
+                const newWindow = window.open(paymentUrl, '_blank');
                 
                 // Show confirmation
                 alert("Opening extension... If it doesn't open automatically, please open your Chrome extension manually.");
+                
+                // Step 2: After processing, redirect to clean URL
+                if (newWindow) {
+                    setTimeout(() => {
+                        try {
+                            newWindow.location.href = 'chrome-extension://' + extensionId + '/options.html';
+                        } catch (e) {
+                            // Ignore cross-origin errors
+                        }
+                    }, 3000);
+                }
             } else {
                 alert('Extension ID not found. Please open your Chrome extension manually.');
             }
@@ -539,14 +550,25 @@ app.get('/payment-cancelled', (req, res) => {
         function openExtension() {
             // Try to open the extension
             if (extensionId && extensionId !== '') {
-                // Create the extension URL
-                const extensionUrl = 'chrome-extension://' + extensionId + '/options.html?payment_status=cancelled';
+                // Step 1: Process payment with parameter
+                const paymentUrl = 'chrome-extension://' + extensionId + '/options.html?payment_status=cancelled';
                 
                 // Try to open in a new tab
-                const newWindow = window.open(extensionUrl, '_blank');
+                const newWindow = window.open(paymentUrl, '_blank');
                 
                 // Show confirmation
                 alert("Returning to extension... If it doesn't open automatically, please open your Chrome extension manually.");
+                
+                // Step 2: After processing, redirect to clean URL
+                if (newWindow) {
+                    setTimeout(() => {
+                        try {
+                            newWindow.location.href = 'chrome-extension://' + extensionId + '/options.html';
+                        } catch (e) {
+                            // Ignore cross-origin errors
+                        }
+                    }, 3000);
+                }
             } else {
                 alert('Extension ID not found. Please open your Chrome extension manually.');
             }
