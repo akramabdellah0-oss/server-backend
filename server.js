@@ -468,7 +468,7 @@ app.get('/payment-success', (req, res) => {
                 window.open(extensionUrl, '_blank');
                 
                 // Show confirmation
-                alert('Opening extension... If it doesn\'t open automatically, please open your Chrome extension manually.');
+                alert("Opening extension... If it doesn't open automatically, please open your Chrome extension manually.");
             } else {
                 alert('Extension ID not found. Please open your Chrome extension manually.');
             }
@@ -546,7 +546,7 @@ app.get('/payment-cancelled', (req, res) => {
                 window.open(extensionUrl, '_blank');
                 
                 // Show confirmation
-                alert('Returning to extension... If it doesn\'t open automatically, please open your Chrome extension manually.');
+                alert("Returning to extension... If it doesn't open automatically, please open your Chrome extension manually.");
             } else {
                 alert('Extension ID not found. Please open your Chrome extension manually.');
             }
