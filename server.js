@@ -332,26 +332,66 @@ async function handleStripeWebhook(req, res) {
         case 'checkout.session.completed':
             console.log('✅ Checkout session completed event received');
             const session = event.data.object;
-            console.log('📧 Session data:', session);
-            console.log('📧 Customer email from session:', session.customer_email);
+            console.log('📧 Full session data:', JSON.stringify(session, null, 2));
+            console.log('📧 Customer email from session.customer_email:', session.customer_email);
+            console.log('📧 Customer metadata:', session.metadata);
             
-            const userEmail = session.customer_email || (session.metadata && session.metadata.user_id);
-            console.log('📧 Customer email from session:', userEmail);
-            console.log('📧 Customer email source:', session.customer_email ? 'customer_email' : 'metadata');
+            // Try multiple ways to get the customer email
+            let userEmail = null;
+            
+            // Method 1: Direct customer_email field
+            if (session.customer_email) {
+                userEmail = session.customer_email;
+                console.log('📧 Found email in session.customer_email:', userEmail);
+            }
+            
+            // Method 2: Metadata
+            else if (session.metadata && session.metadata.user_id) {
+                userEmail = session.metadata.user_id;
+                console.log('📧 Found email in session.metadata.user_id:', userEmail);
+            }
+            
+            // Method 3: Customer object
+            else if (session.customer && typeof session.customer === 'string') {
+                // Sometimes customer is just the customer ID, but let's log it anyway
+                console.log('📧 Customer ID from session.customer:', session.customer);
+            }
+            
+            // Method 4: Customer details object
+            else if (session.customer_details && session.customer_details.email) {
+                userEmail = session.customer_details.email;
+                console.log('📧 Found email in session.customer_details.email:', userEmail);
+            }
+            
+            console.log('📧 Final determined user email:', userEmail);
             
             if (userEmail) {
                 // Determine plan based on price ID
                 let planName = 'Pro'; // Default
+                console.log('📋 Session line items structure:', session.line_items);
                 if (session.line_items && session.line_items.data && session.line_items.data.length > 0) {
-                    const priceId = session.line_items.data[0].price.id;
-                    console.log('💰 Price ID from session:', priceId);
-                    // Map price IDs to plan names (you'll need to update these with your actual price IDs)
-                    if (priceId === 'price_1SXINCJdBDLWAyB09C5II34Q') {
-                        planName = 'Plus';
-                    } else if (priceId === 'price_1SXIM2JdBDLWAyB0cVOcC25x') {
-                        planName = 'Pro';
+                    const firstLineItem = session.line_items.data[0];
+                    console.log('📋 First line item:', JSON.stringify(firstLineItem, null, 2));
+                    
+                    if (firstLineItem.price) {
+                        const priceId = firstLineItem.price.id;
+                        console.log('💰 Price ID from session:', priceId);
+                        
+                        // Map price IDs to plan names (you'll need to update these with your actual price IDs)
+                        if (priceId === 'price_1SXINCJdBDLWAyB09C5II34Q') {
+                            planName = 'Plus';
+                        } else if (priceId === 'price_1SXIM2JdBDLWAyB0cVOcC25x') {
+                            planName = 'Pro';
+                        } else {
+                            console.log('⚠️ Unknown price ID, using default Pro plan');
+                        }
+                        
+                        console.log('🏷️ Determined plan name:', planName);
+                    } else {
+                        console.log('⚠️ No price information found in line item');
                     }
-                    console.log('🏷️ Determined plan name:', planName);
+                } else {
+                    console.log('⚠️ No line items found in session, using default Pro plan');
                 }
                 
                 // Mettre à jour le statut de l'utilisateur dans notre "base de données"
@@ -366,6 +406,8 @@ async function handleStripeWebhook(req, res) {
                 
                 // Save data to file
                 saveDataToFile();
+            } else {
+                console.log('❌ ERROR: No user email found in session! Cannot activate subscription.');
             }
             break;
         // ... gérer d'autres événements si nécessaire
@@ -626,6 +668,31 @@ app.get('/api/test-subscription', (req, res) => {
     saveDataToFile();
     
     res.json({ success: true, message: `Subscription activated for ${email}` });
+});
+
+// Test endpoint to check a user's subscription status
+app.get('/api/check-user-status', (req, res) => {
+    const { email } = req.query;
+    if (!email) {
+        return res.status(400).json({ error: 'Email required' });
+    }
+    
+    const user = userSubscriptions[email];
+    console.log(`🔍 Checking subscription status for ${email}:`, user);
+    
+    if (user && user.isPremium) {
+        return res.json({ 
+            is_premium: true, 
+            plan: user.plan,
+            message: `User ${email} has ${user.plan} subscription`
+        });
+    } else {
+        return res.json({ 
+            is_premium: false, 
+            plan: 'Free',
+            message: `User ${email} has no premium subscription`
+        });
+    }
 });
 
 // Start the server
