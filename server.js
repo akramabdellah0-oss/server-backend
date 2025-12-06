@@ -695,6 +695,55 @@ app.get('/api/check-user-status', (req, res) => {
     }
 });
 
+// Test endpoint to manually trigger subscription update with detailed logging
+app.get('/api/manual-subscription', (req, res) => {
+    const { email, plan } = req.query;
+    if (!email) {
+        return res.status(400).json({ error: 'Email required' });
+    }
+    
+    console.log(`🔧 MANUAL SUBSCRIPTION TRIGGER for ${email}`);
+    console.log(`🔧 Current subscriptions before update:`, userSubscriptions);
+    
+    const planName = plan || 'Pro';
+    userSubscriptions[email] = {
+        isPremium: true,
+        plan: planName
+    };
+    
+    console.log(`🔧 MANUAL: Subscription ACTIVATED for ${email} (${planName})`);
+    console.log(`🔧 Current subscriptions after update:`, userSubscriptions);
+    
+    // Save data to file
+    saveDataToFile();
+    
+    // Also save a backup copy for debugging
+    try {
+        const fs = require('fs');
+        const path = require('path');
+        const backupFile = path.join(__dirname, `manual_subscription_backup_${Date.now()}.json`);
+        fs.writeFileSync(backupFile, JSON.stringify({
+            timestamp: new Date().toISOString(),
+            email: email,
+            plan: planName,
+            allSubscriptions: userSubscriptions
+        }, null, 2));
+        console.log(`🔧 Backup saved to: ${backupFile}`);
+    } catch (backupError) {
+        console.error('❌ Error saving backup:', backupError);
+    }
+    
+    res.json({ 
+        success: true, 
+        message: `Subscription manually activated for ${email}`,
+        data: {
+            email: email,
+            plan: planName,
+            allSubscriptionsCount: Object.keys(userSubscriptions).length
+        }
+    });
+});
+
 // Start the server
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
