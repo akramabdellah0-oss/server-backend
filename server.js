@@ -422,7 +422,7 @@ app.get('/payment-success', (req, res) => {
     const { extension_id } = req.query;
     console.log('💰 Payment success redirect for extension:', extension_id);
     
-    // Serve a simple HTML page that redirects to the extension
+    // Serve a simple HTML page with auto-close functionality
     res.send(`
 <!DOCTYPE html>
 <html>
@@ -433,70 +433,39 @@ app.get('/payment-success', (req, res) => {
         body { font-family: Arial, sans-serif; text-align: center; padding: 50px; background: #f0f8ff; }
         .container { max-width: 600px; margin: 0 auto; background: white; padding: 30px; border-radius: 10px; box-shadow: 0 0 20px rgba(0,0,0,0.1); }
         h1 { color: #28a745; }
-        .instructions { background: #e8f5e9; padding: 20px; border-radius: 5px; margin: 20px 0; }
-        button { background: #007bff; color: white; border: none; padding: 12px 24px; font-size: 16px; border-radius: 5px; cursor: pointer; }
-        button:hover { background: #0056b3; }
+        .message { margin: 20px 0; font-size: 18px; }
+        .progress { width: 100%; height: 4px; background: #e0e0e0; border-radius: 2px; margin: 20px 0; overflow: hidden; }
+        .progress-bar { height: 100%; background: #28a745; width: 0%; animation: progress 3s linear forwards; }
+        @keyframes progress { to { width: 100%; } }
+        .note { background: #e8f5e9; padding: 15px; border-radius: 5px; margin: 20px 0; }
     </style>
 </head>
 <body>
     <div class="container">
         <h1>✅ Payment Successful!</h1>
-        <p>Your payment has been processed successfully.</p>
-        
-        <div class="instructions">
-            <h3>Next Steps:</h3>
-            <p>Please click the button below to open your extension and activate your premium features.</p>
+        <div class="message">
+            <p>Your payment has been processed successfully.</p>
+            <p>Your premium features will be activated automatically.</p>
         </div>
         
-        <button id="open-extension-btn">Open Extension</button>
+        <div class="progress">
+            <div class="progress-bar"></div>
+        </div>
         
-        <p>If the button doesn't work, manually open your Chrome extension and refresh the options page.</p>
+        <div class="note">
+            <p>This page will close automatically. Your extension will refresh with premium features activated.</p>
+        </div>
     </div>
     
     <script>
-        // Get extension ID from URL parameters
-        const urlParams = new URLSearchParams(window.location.search);
-        const extensionId = urlParams.get('extension_id');
+        // Notify the extension and close the tab automatically
+        console.log('Payment success page loaded. Activating premium features...');
         
-        function openExtension() {
-            // Try to open the extension
-            if (extensionId && extensionId !== '') {
-                // Step 1: Process payment with parameter
-                const paymentUrl = 'chrome-extension://' + extensionId + '/options.html?payment_status=success';
-                
-                // Try to open in a new tab
-                const newWindow = window.open(paymentUrl, '_blank');
-                
-                // Show confirmation
-                alert("Opening extension... If it doesn't open automatically, please open your Chrome extension manually.");
-                
-                // Step 2: After processing, redirect to clean URL
-                if (newWindow) {
-                    setTimeout(() => {
-                        try {
-                            newWindow.location.href = 'chrome-extension://' + extensionId + '/options.html';
-                        } catch (e) {
-                            // Ignore cross-origin errors
-                        }
-                    }, 3000);
-                }
-            } else {
-                alert('Extension ID not found. Please open your Chrome extension manually.');
-            }
-        }
-        
-        // Add event listener to button
-        document.getElementById('open-extension-btn').addEventListener('click', openExtension);
-        
-        // Auto-try to open after 2 seconds
-        setTimeout(openExtension, 2000);
-        
-        // Also try to open immediately
-        if (document.readyState === 'loading') {
-            document.addEventListener('DOMContentLoaded', openExtension);
-        } else {
-            openExtension();
-        }
+        // Close the tab after 3 seconds
+        setTimeout(function() {
+            console.log('Closing payment success page...');
+            window.close();
+        }, 3000);
     </script>
 </body>
 </html>
@@ -510,7 +479,7 @@ app.get('/payment-cancelled', (req, res) => {
     const { extension_id } = req.query;
     console.log('❌ Payment cancelled for extension:', extension_id);
     
-    // Serve a simple HTML page for cancelled payments
+    // Serve a simple HTML page with auto-close functionality
     res.send(`
 <!DOCTYPE html>
 <html>
@@ -521,71 +490,38 @@ app.get('/payment-cancelled', (req, res) => {
         body { font-family: Arial, sans-serif; text-align: center; padding: 50px; background: #fff5f5; }
         .container { max-width: 600px; margin: 0 auto; background: white; padding: 30px; border-radius: 10px; box-shadow: 0 0 20px rgba(0,0,0,0.1); }
         h1 { color: #dc3545; }
-        .instructions { background: #f8d7da; padding: 20px; border-radius: 5px; margin: 20px 0; }
-        button { background: #007bff; color: white; border: none; padding: 12px 24px; font-size: 16px; border-radius: 5px; cursor: pointer; }
-        button:hover { background: #0056b3; }
+        .message { margin: 20px 0; font-size: 18px; }
+        .progress { width: 100%; height: 4px; background: #e0e0e0; border-radius: 2px; margin: 20px 0; overflow: hidden; }
+        .progress-bar { height: 100%; background: #dc3545; width: 0%; animation: progress 3s linear forwards; }
+        @keyframes progress { to { width: 100%; } }
+        .note { background: #f8d7da; padding: 15px; border-radius: 5px; margin: 20px 0; }
     </style>
 </head>
 <body>
     <div class="container">
         <h1>❌ Payment Cancelled</h1>
-        <p>Your payment was cancelled or not completed.</p>
-        
-        <div class="instructions">
-            <h3>You can still:</h3>
-            <p>• Try again with a different payment method</p>
-            <p>• Continue using the free version of the extension</p>
+        <div class="message">
+            <p>Your payment was cancelled or not completed.</p>
+            <p>You can try again or continue with the free plan.</p>
         </div>
         
-        <button id="open-extension-btn">Return to Extension</button>
+        <div class="progress">
+            <div class="progress-bar"></div>
+        </div>
         
-        <p>If the button doesn't work, manually open your Chrome extension.</p>
+        <div class="note">
+            <p>This page will close automatically. You can upgrade anytime from extension settings.</p>
+        </div>
     </div>
     
     <script>
-        // Get extension ID from URL parameters
-        const urlParams = new URLSearchParams(window.location.search);
-        const extensionId = urlParams.get('extension_id');
+        // Close the tab after 3 seconds
+        console.log('Payment cancelled page loaded. Closing automatically...');
         
-        function openExtension() {
-            // Try to open the extension
-            if (extensionId && extensionId !== '') {
-                // Step 1: Process payment with parameter
-                const paymentUrl = 'chrome-extension://' + extensionId + '/options.html?payment_status=cancelled';
-                
-                // Try to open in a new tab
-                const newWindow = window.open(paymentUrl, '_blank');
-                
-                // Show confirmation
-                alert("Returning to extension... If it doesn't open automatically, please open your Chrome extension manually.");
-                
-                // Step 2: After processing, redirect to clean URL
-                if (newWindow) {
-                    setTimeout(() => {
-                        try {
-                            newWindow.location.href = 'chrome-extension://' + extensionId + '/options.html';
-                        } catch (e) {
-                            // Ignore cross-origin errors
-                        }
-                    }, 3000);
-                }
-            } else {
-                alert('Extension ID not found. Please open your Chrome extension manually.');
-            }
-        }
-        
-        // Add event listener to button
-        document.getElementById('open-extension-btn').addEventListener('click', openExtension);
-        
-        // Auto-try to open after 2 seconds
-        setTimeout(openExtension, 2000);
-        
-        // Also try to open immediately
-        if (document.readyState === 'loading') {
-            document.addEventListener('DOMContentLoaded', openExtension);
-        } else {
-            openExtension();
-        }
+        setTimeout(function() {
+            console.log('Closing payment cancelled page...');
+            window.close();
+        }, 3000);
     </script>
 </body>
 </html>
