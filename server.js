@@ -744,6 +744,59 @@ app.get('/api/manual-subscription', (req, res) => {
     });
 });
 
+// Debug endpoint to view current subscription data
+app.get('/api/debug-subscriptions', (req, res) => {
+    console.log('🔧 DEBUG: Current subscription data request');
+    console.log('🔧 Current userSubscriptions:', userSubscriptions);
+    console.log('🔧 Current verificationCodes:', verificationCodes);
+    
+    // Try to read the data file
+    try {
+        const fs = require('fs');
+        const path = require('path');
+        const dataFile = path.join(__dirname, 'app_data.json');
+        
+        if (fs.existsSync(dataFile)) {
+            const fileContent = fs.readFileSync(dataFile, 'utf8');
+            const parsedData = JSON.parse(fileContent);
+            
+            res.json({
+                success: true,
+                message: 'Current subscription data',
+                inMemory: {
+                    userSubscriptions: userSubscriptions,
+                    verificationCodes: verificationCodes,
+                    userCount: Object.keys(userSubscriptions).length
+                },
+                inFile: parsedData,
+                fileExists: true
+            });
+        } else {
+            res.json({
+                success: true,
+                message: 'Current subscription data (no file)',
+                inMemory: {
+                    userSubscriptions: userSubscriptions,
+                    verificationCodes: verificationCodes,
+                    userCount: Object.keys(userSubscriptions).length
+                },
+                fileExists: false
+            });
+        }
+    } catch (error) {
+        console.error('❌ Error reading data file:', error);
+        res.json({
+            success: false,
+            error: error.message,
+            inMemory: {
+                userSubscriptions: userSubscriptions,
+                verificationCodes: verificationCodes,
+                userCount: Object.keys(userSubscriptions).length
+            }
+        });
+    }
+});
+
 // Start the server
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
