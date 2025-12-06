@@ -45,6 +45,10 @@ if (SENDGRID_API_KEY) {
 // --- Stripe Configuration ---
 const STRIPE_SECRET_KEY = process.env.STRIPE_SECRET_KEY;
 const STRIPE_WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET;
+console.log('💳 Stripe configuration:');
+console.log('   Secret key configured:', !!STRIPE_SECRET_KEY);
+console.log('   Webhook secret configured:', !!STRIPE_WEBHOOK_SECRET);
+console.log('   Webhook secret value:', STRIPE_WEBHOOK_SECRET ? '[REDACTED]' : 'NOT SET');
 let stripe;
 if (STRIPE_SECRET_KEY) {
     stripe = new Stripe(STRIPE_SECRET_KEY);
@@ -209,6 +213,7 @@ app.get('/api/check-license', (req, res) => {
  */
 app.post('/api/create-checkout-session', async (req, res) => {
     const { priceId, userId, successUrl, cancelUrl } = req.body;
+    console.log('💳 Creating checkout session with:', { priceId, userId, successUrl, cancelUrl });
     try {
         // Create a new checkout session with Stripe
         const session = await stripe.checkout.sessions.create({
@@ -224,6 +229,9 @@ app.post('/api/create-checkout-session', async (req, res) => {
             cancel_url: cancelUrl,   // URL de redirection en cas d'annulation
             // Associer la session à l'e-mail de l'utilisateur
             customer_email: userId,
+            metadata: {
+                user_id: userId
+            }
         });
 
         console.log(`✅ Stripe session created: ${session.id}`);
@@ -241,6 +249,11 @@ app.post('/api/create-checkout-session', async (req, res) => {
  * Stripe appelle cet endpoint pour notifier des événements (ex: paiement réussi).
  */
 async function handleStripeWebhook(req, res) {
+    console.log('🔔 Stripe webhook received');
+    console.log('📝 Request headers:', req.headers);
+    console.log('📦 Request body length:', req.body.length);
+    console.log('🔑 Webhook secret configured:', !!STRIPE_WEBHOOK_SECRET);
+    
     if (!STRIPE_WEBHOOK_SECRET) {
         console.error('❌ Stripe webhook secret not configured.');
         return res.status(400).send('Webhook Error: Missing secret.');
@@ -251,19 +264,26 @@ async function handleStripeWebhook(req, res) {
 
     try {
         event = stripe.webhooks.constructEvent(req.body, sig, STRIPE_WEBHOOK_SECRET);
+        console.log('✅ Webhook event constructed successfully');
+        console.log('🏷️ Event type:', event.type);
+        console.log('🆔 Event ID:', event.id);
     } catch (err) {
         console.error(`❌ Webhook signature verification failed:`, err.message);
         return res.status(400).send(`Webhook Error: ${err.message}`);
     }
 
     // Gérer l'événement
+    console.log('🔄 Handling event type:', event.type);
     switch (event.type) {
         case 'checkout.session.completed':
+            console.log('✅ Checkout session completed event received');
             const session = event.data.object;
-            console.log('✅ Checkout session completed:', session.id);
+            console.log('📧 Session data:', session);
+            console.log('📧 Customer email from session:', session.customer_email);
             
-            const userEmail = session.customer_email;
+            const userEmail = session.customer_email || (session.metadata && session.metadata.user_id);
             console.log('📧 Customer email from session:', userEmail);
+            console.log('📧 Customer email source:', session.customer_email ? 'customer_email' : 'metadata');
             
             if (userEmail) {
                 // Determine plan based on price ID
@@ -281,6 +301,8 @@ async function handleStripeWebhook(req, res) {
                 }
                 
                 // Mettre à jour le statut de l'utilisateur dans notre "base de données"
+                console.log('💾 Updating user subscription for:', userEmail);
+                console.log('🏷️ Plan name:', planName);
                 userSubscriptions[userEmail] = {
                     isPremium: true,
                     plan: planName
@@ -528,6 +550,23 @@ app.get('/payment-cancelled', (req, res) => {
     `);
 });
 
+// Test endpoint to manually trigger subscription update
+app.get('/api/test-subscription', (req, res) => {
+    const { email, plan } = req.query;
+    if (!email) {
+        return res.status(400).json({ error: 'Email required' });
+    }
+    
+    const planName = plan || 'Pro';
+    userSubscriptions[email] = {
+        isPremium: true,
+        plan: planName
+    };
+    
+    console.log(`🧪 TEST: Subscription ACTIVATED for ${email} (${planName})`);
+    res.json({ success: true, message: `Subscription activated for ${email}` });
+});
+
 // Start the server
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
@@ -545,4 +584,5 @@ app.listen(PORT, () => {
     console.log(`   POST /api/mark-rule-used/:shareId`);
     console.log(`   GET  /payment-success`);
     console.log(`   GET  /payment-cancelled`);
+    console.log(`   GET  /api/test-subscription`);
 });
