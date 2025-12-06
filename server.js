@@ -6,6 +6,8 @@ const sgMail = require('@sendgrid/mail'); // 🔴 REMPLACER nodemailer
 const crypto = require('crypto');
 const rateLimit = require('express-rate-limit');
 const cors = require('cors');
+const fs = require('fs');
+const path = require('path');
 
 // Load environment variables from .env file
 require('dotenv').config();
@@ -30,7 +32,53 @@ app.use(express.json());
 // Note: In production, replace these with a real database (MongoDB, PostgreSQL, etc.)
 const verificationCodes = {};
 const userSubscriptions = {}; // Stores license status: { 'email@example.com': { isPremium: true, plan: 'Pro' } }
-const sharedRules = {}; // Stores shared rules: { shareId: { fromEmail, toEmail, rule, expiresAt, used } }
+const sharedRules = {};
+
+// --- SUBSCRIPTION DATA PERSISTENCE ---
+const DATA_FILE = path.join(__dirname, 'app_data.json');
+
+// Save all data to file
+function saveDataToFile() {
+    try {
+        const data = {
+            userSubscriptions: userSubscriptions,
+            verificationCodes: verificationCodes
+        };
+        fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2));
+        console.log('💾 Data saved to file');
+    } catch (error) {
+        console.error('❌ Error saving data to file:', error);
+    }
+}
+
+// Load data from file
+function loadDataFromFile() {
+    try {
+        if (fs.existsSync(DATA_FILE)) {
+            const data = fs.readFileSync(DATA_FILE, 'utf8');
+            const loadedData = JSON.parse(data);
+            
+            // Load user subscriptions
+            if (loadedData.userSubscriptions) {
+                Object.assign(userSubscriptions, loadedData.userSubscriptions);
+                console.log('📂 User subscriptions loaded from file:', Object.keys(userSubscriptions).length, 'users');
+            }
+            
+            // Load verification codes
+            if (loadedData.verificationCodes) {
+                Object.assign(verificationCodes, loadedData.verificationCodes);
+                console.log('📂 Verification codes loaded from file:', Object.keys(verificationCodes).length, 'codes');
+            }
+        } else {
+            console.log('📄 Data file not found, starting with empty data');
+        }
+    } catch (error) {
+        console.error('❌ Error loading data from file:', error);
+    }
+}
+
+// Load data on server start
+loadDataFromFile();
 
 // --- SendGrid Configuration ---
 const SENDGRID_API_KEY = process.env.SENDGRID_API_KEY;
@@ -87,6 +135,9 @@ app.post('/api/send-verification-code', sendCodeLimiter, async (req, res) => {
 
     // Save the code with a 10-minute expiration
     verificationCodes[email] = { code, expiresAt: Date.now() + 10 * 60 * 1000 };
+    
+    // Save data to file
+    saveDataToFile();
 
     // Check if SendGrid is configured
     if (!SENDGRID_API_KEY) {
@@ -171,8 +222,11 @@ app.post('/api/verify-code', (req, res) => {
     delete verificationCodes[email];
     
     if (!userSubscriptions[email]) {
-        userSubscriptions[email] = { isPremium: false, plan: 'Free' };
+        userSubscriptions[email] = { isPremium: false, plan: 'Free' };  
     }
+    
+    // Save data to file
+    saveDataToFile();
 
     console.log(`✅ Email verified: ${email}`);
     res.json({ success: true, message: 'E-mail vérifié avec succès.' });
@@ -309,6 +363,9 @@ async function handleStripeWebhook(req, res) {
                 };
                 console.log(`🌟 Subscription ACTIVATED for ${userEmail} (${planName})`);
                 console.log('💾 Updated user subscriptions:', userSubscriptions);
+                
+                // Save data to file
+                saveDataToFile();
             }
             break;
         // ... gérer d'autres événements si nécessaire
@@ -564,6 +621,10 @@ app.get('/api/test-subscription', (req, res) => {
     };
     
     console.log(`🧪 TEST: Subscription ACTIVATED for ${email} (${planName})`);
+    
+    // Save data to file
+    saveDataToFile();
+    
     res.json({ success: true, message: `Subscription activated for ${email}` });
 });
 
