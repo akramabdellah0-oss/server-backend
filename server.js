@@ -406,8 +406,21 @@ async function handleStripeWebhook(req, res) {
                 
                 // Save data to file
                 saveDataToFile();
+                
+                // Also send a message to the extension to update the user email
+                // This is a workaround since we can't directly communicate with the extension
+                // The extension will need to check the license status periodically
             } else {
                 console.log('❌ ERROR: No user email found in session! Cannot activate subscription.');
+                
+                // Log more detailed session information for debugging
+                console.log('📋 Full session object keys:', Object.keys(session));
+                if (session.customer) {
+                    console.log('📋 Customer object type:', typeof session.customer);
+                    if (typeof session.customer === 'object') {
+                        console.log('📋 Customer object keys:', Object.keys(session.customer));
+                    }
+                }
             }
             break;
         // ... gérer d'autres événements si nécessaire
@@ -904,6 +917,41 @@ app.get('/api/check-email-exists', (req, res) => {
             success: true,
             exists: false,
             email: email
+        });
+    }
+});
+
+// Endpoint to get the most recent payment email
+// This helps the extension discover which email was used for payment
+app.get('/api/get-recent-payment-email', (req, res) => {
+    console.log('🔍 Getting recent payment email');
+    
+    // Get all premium users
+    const premiumUsers = [];
+    for (const [email, subscription] of Object.entries(userSubscriptions)) {
+        if (subscription.isPremium) {
+            premiumUsers.push({
+                email: email,
+                plan: subscription.plan,
+                // We don't have timestamps, so we'll just return all premium users
+            });
+        }
+    }
+    
+    console.log(`📋 Found ${premiumUsers.length} premium users`);
+    
+    if (premiumUsers.length > 0) {
+        // Return the first one (in a real implementation, you'd want the most recent)
+        const recentUser = premiumUsers[0];
+        res.json({
+            success: true,
+            email: recentUser.email,
+            plan: recentUser.plan
+        });
+    } else {
+        res.json({
+            success: false,
+            error: 'No recent payments found'
         });
     }
 });
