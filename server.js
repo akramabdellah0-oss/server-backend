@@ -956,6 +956,50 @@ app.get('/api/get-recent-payment-email', (req, res) => {
     }
 });
 
+// Emergency endpoint to manually activate a user's subscription
+// This is for cases where the webhook failed to process
+app.get('/api/emergency-activate', (req, res) => {
+    const { email, plan } = req.query;
+    
+    if (!email) {
+        return res.status(400).json({ 
+            success: false, 
+            error: 'Email is required' 
+        });
+    }
+    
+    // Validate email format
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email)) {
+        return res.status(400).json({ 
+            success: false, 
+            error: 'Invalid email format' 
+        });
+    }
+    
+    const planName = plan || 'Pro';
+    
+    console.log(`🚨 EMERGENCY ACTIVATION for ${email} with plan ${planName}`);
+    
+    // Activate the subscription
+    userSubscriptions[email] = {
+        isPremium: true,
+        plan: planName
+    };
+    
+    // Save to file
+    saveDataToFile();
+    
+    console.log(`✅ EMERGENCY: Subscription activated for ${email} (${planName})`);
+    
+    res.json({
+        success: true,
+        message: `Subscription forcefully activated for ${email} with ${planName} plan`,
+        email: email,
+        plan: planName
+    });
+});
+
 // Start the server
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
