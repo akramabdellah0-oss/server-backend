@@ -245,9 +245,19 @@ app.get('/api/check-license', (req, res) => {
         return res.status(400).json({ error: 'User ID required' });
     }
 
-    const user = userSubscriptions[user_id];
+    // Decode the email if it's encoded
+    let decodedUserId = user_id;
+    try {
+        decodedUserId = decodeURIComponent(user_id);
+        console.log('🔓 Decoded user ID:', decodedUserId);
+    } catch (decodeError) {
+        console.log('⚠️ Could not decode user ID, using original:', user_id);
+    }
+
+    const user = userSubscriptions[decodedUserId];
     
     console.log('👤 User subscription data:', user);
+    console.log('📋 All users in database:', Object.keys(userSubscriptions));
 
     if (user && user.isPremium) {
         const planData = { is_premium: true, plan: user.plan || 'Pro' };
@@ -378,12 +388,16 @@ async function handleStripeWebhook(req, res) {
                         console.log('💰 Price ID from session:', priceId);
                         
                         // Map price IDs to plan names (you'll need to update these with your actual price IDs)
+                        console.log('🔍 Checking price ID mapping...');
                         if (priceId === 'price_1SXINCJdBDLWAyB09C5II34Q') {
                             planName = 'Plus';
+                            console.log('🏷️ Matched Plus plan');
                         } else if (priceId === 'price_1SXIM2JdBDLWAyB0cVOcC25x') {
                             planName = 'Pro';
+                            console.log('🏷️ Matched Pro plan');
                         } else {
                             console.log('⚠️ Unknown price ID, using default Pro plan');
+                            console.log('❓ Unrecognized price ID:', priceId);
                         }
                         
                         console.log('🏷️ Determined plan name:', planName);
