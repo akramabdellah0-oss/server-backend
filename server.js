@@ -797,6 +797,117 @@ app.get('/api/debug-subscriptions', (req, res) => {
     }
 });
 
+// Emergency endpoint to force activate a user's subscription
+app.get('/api/force-activate', (req, res) => {
+    const { email, plan } = req.query;
+    
+    if (!email) {
+        return res.status(400).json({ 
+            success: false, 
+            error: 'Email is required' 
+        });
+    }
+    
+    const planName = plan || 'Pro';
+    
+    console.log(`🚨 EMERGENCY ACTIVATION for ${email} with plan ${planName}`);
+    
+    // Activate the subscription
+    userSubscriptions[email] = {
+        isPremium: true,
+        plan: planName
+    };
+    
+    // Save to file
+    saveDataToFile();
+    
+    console.log(`✅ EMERGENCY: Subscription activated for ${email} (${planName})`);
+    
+    res.json({
+        success: true,
+        message: `Subscription forcefully activated for ${email} with ${planName} plan`,
+        email: email,
+        plan: planName
+    });
+});
+
+// Endpoint to manually register and activate a user
+app.get('/api/register-user', (req, res) => {
+    const { email, plan } = req.query;
+    
+    if (!email) {
+        return res.status(400).json({ 
+            success: false, 
+            error: 'Email is required' 
+        });
+    }
+    
+    // Validate email format
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email)) {
+        return res.status(400).json({ 
+            success: false, 
+            error: 'Invalid email format' 
+        });
+    }
+    
+    const planName = plan || 'Pro';
+    
+    console.log(`👤 REGISTERING USER: ${email} with plan ${planName}`);
+    
+    // Register and activate the subscription
+    userSubscriptions[email] = {
+        isPremium: true,
+        plan: planName
+    };
+    
+    // Save to file
+    saveDataToFile();
+    
+    console.log(`✅ USER REGISTERED: ${email} (${planName})`);
+    
+    res.json({
+        success: true,
+        message: `User ${email} registered with ${planName} plan`,
+        email: email,
+        plan: planName
+    });
+});
+
+// Endpoint to check if an email exists in the subscription database
+app.get('/api/check-email-exists', (req, res) => {
+    const { email } = req.query;
+    
+    if (!email) {
+        return res.status(400).json({ 
+            success: false, 
+            error: 'Email is required' 
+        });
+    }
+    
+    console.log(`🔍 Checking if email exists in database: ${email}`);
+    
+    // Check if email exists
+    const user = userSubscriptions[email];
+    
+    if (user) {
+        console.log(`✅ Email found: ${email}`, user);
+        res.json({
+            success: true,
+            exists: true,
+            email: email,
+            subscription: user
+        });
+    } else {
+        console.log(`❌ Email not found: ${email}`);
+        res.json({
+            success: true,
+            exists: false,
+            email: email
+        });
+    }
+});
+
 // Start the server
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
