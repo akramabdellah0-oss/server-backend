@@ -314,139 +314,104 @@ app.post('/api/create-checkout-session', async (req, res) => {
  */
 async function handleStripeWebhook(req, res) {
     console.log('🔔 Stripe webhook received');
-    console.log('📝 Request headers:', req.headers);
-    console.log('📦 Request body length:', req.body.length);
-    console.log('🔑 Webhook secret configured:', !!STRIPE_WEBHOOK_SECRET);
     
-    if (!STRIPE_WEBHOOK_SECRET) {
-        console.error('❌ Stripe webhook secret not configured.');
-        return res.status(400).send('Webhook Error: Missing secret.');
-    }
-
     const sig = req.headers['stripe-signature'];
     let event;
 
     try {
-        event = stripe.webhooks.constructEvent(req.body, sig, STRIPE_WEBHOOK_SECRET);
-        console.log('✅ Webhook event constructed successfully');
-        console.log('🏷️ Event type:', event.type);
-        console.log('🆔 Event ID:', event.id);
+        event = stripe.webhooks.constructEvent(req.body, sig, process.env.STRIPE_WEBHOOK_SECRET);
+        console.log('✅ Webhook verified');
     } catch (err) {
-        console.error(`❌ Webhook signature verification failed:`, err.message);
+        console.error('❌ Webhook signature verification failed:', err.message);
         return res.status(400).send(`Webhook Error: ${err.message}`);
     }
 
     // Gérer l'événement
     console.log('🔄 Handling event type:', event.type);
-    switch (event.type) {
-        case 'checkout.session.completed':
-            console.log('✅ Checkout session completed event received');
-            const session = event.data.object;
-            console.log('📧 Full session data:', JSON.stringify(session, null, 2));
-            console.log('📧 Customer email from session.customer_email:', session.customer_email);
-            console.log('📧 Customer metadata:', session.metadata);
+    
+    if (event.type === 'checkout.session.completed') {
+        const session = event.data.object;
+        console.log('✅ Checkout session completed');
+        
+        // Récupérer l'email du client
+        const customerEmail = session.customer_email || 
+                            (session.customer_details && session.customer_details.email) ||
+                            (session.metadata && session.metadata.user_id);
+        
+        if (!customerEmail) {
+            console.error('❌ No email found in session');
+            return res.status(400).json({ error: 'No email found in session' });
+        }
+
+        try {
+            // Déterminer le plan en fonction du prix
+            let planName = 'Pro'; // Par défaut
             
-            // Try multiple ways to get the customer email
-            let userEmail = null;
-            
-            // Method 1: Direct customer_email field
-            if (session.customer_email) {
-                userEmail = session.customer_email;
-                console.log('📧 Found email in session.customer_email:', userEmail);
+            // Si vous avez des IDs de prix spécifiques pour différents plans
+            if (session.line_items && session.line_items.data && session.line_items.data[0]) {
+                const priceId = session.line_items.data[0].price.id;
+                // Mettez à jour cette logique selon vos IDs de prix Stripe
+                if (priceId === 'price_123') planName = 'Basic';
+                if (priceId === 'price_456') planName = 'Pro';
+                if (priceId === 'price_789') planName = 'Enterprise';
             }
+
+            // Mettre à jour le statut de l'utilisateur
+            userSubscriptions[customerEmail] = {
+                isPremium: true,
+                plan: planName,
+                activatedAt: new Date().toISOString(),
+                lastPayment: new Date().toISOString(),
+                status: 'active'
+            };
+
+            // Sauvegarder les données
+            await saveDataToFile();
             
-            // Method 2: Metadata
-            else if (session.metadata && session.metadata.user_id) {
-                userEmail = session.metadata.user_id;
-                console.log('📧 Found email in session.metadata.user_id:', userEmail);
-            }
+            console.log(`✅ Premium activé pour: ${customerEmail} (${planName})`);
             
-            // Method 3: Customer object
-            else if (session.customer && typeof session.customer === 'string') {
-                // Sometimes customer is just the customer ID, but let's log it anyway
-                console.log('📧 Customer ID from session.customer:', session.customer);
-            }
+            // Envoyer un email de confirmation
+            await sendActivationEmail(customerEmail, planName);
             
-            // Method 4: Customer details object
-            else if (session.customer_details && session.customer_details.email) {
-                userEmail = session.customer_details.email;
-                console.log('📧 Found email in session.customer_details.email:', userEmail);
-            }
-            
-            console.log('📧 Final determined user email:', userEmail);
-            
-            if (userEmail) {
-                // Determine plan based on price ID
-                let planName = 'Pro'; // Default
-                console.log('📋 Session line items structure:', session.line_items);
-                if (session.line_items && session.line_items.data && session.line_items.data.length > 0) {
-                    const firstLineItem = session.line_items.data[0];
-                    console.log('📋 First line item:', JSON.stringify(firstLineItem, null, 2));
-                    
-                    if (firstLineItem.price) {
-                        const priceId = firstLineItem.price.id;
-                        console.log('💰 Price ID from session:', priceId);
-                        
-                        // Map price IDs to plan names (you'll need to update these with your actual price IDs)
-                        console.log('🔍 Checking price ID mapping...');
-                        if (priceId === 'price_1SXINCJdBDLWAyB09C5II34Q') {
-                            planName = 'Plus';
-                            console.log('🏷️ Matched Plus plan');
-                        } else if (priceId === 'price_1SXIM2JdBDLWAyB0cVOcC25x') {
-                            planName = 'Pro';
-                            console.log('🏷️ Matched Pro plan');
-                        } else {
-                            console.log('⚠️ Unknown price ID, using default Pro plan');
-                            console.log('❓ Unrecognized price ID:', priceId);
-                        }
-                        
-                        console.log('🏷️ Determined plan name:', planName);
-                    } else {
-                        console.log('⚠️ No price information found in line item');
-                    }
-                } else {
-                    console.log('⚠️ No line items found in session, using default Pro plan');
-                }
-                
-                // Mettre à jour le statut de l'utilisateur dans notre "base de données"
-                console.log('💾 Updating user subscription for:', userEmail);
-                console.log('🏷️ Plan name:', planName);
-                userSubscriptions[userEmail] = {
-                    isPremium: true,
-                    plan: planName
-                };
-                console.log(`🌟 Subscription ACTIVATED for ${userEmail} (${planName})`);
-                console.log('💾 Updated user subscriptions:', userSubscriptions);
-                
-                // Save data to file
-                saveDataToFile();
-                
-                // Also send a message to the extension to update the user email
-                // This is a workaround since we can't directly communicate with the extension
-                // The extension will need to check the license status periodically
-            } else {
-                console.log('❌ ERROR: No user email found in session! Cannot activate subscription.');
-                
-                // Log more detailed session information for debugging
-                console.log('📋 Full session object keys:', Object.keys(session));
-                if (session.customer) {
-                    console.log('📋 Customer object type:', typeof session.customer);
-                    if (typeof session.customer === 'object') {
-                        console.log('📋 Customer object keys:', Object.keys(session.customer));
-                    }
-                }
-            }
-            break;
-        // ... gérer d'autres événements si nécessaire
-        default:
-            console.log(`🔔 Unhandled event type ${event.type}`);
+        } catch (error) {
+            console.error('❌ Error processing webhook:', error);
+            return res.status(500).json({ error: 'Internal server error' });
+        }
     }
 
-    // Renvoyer une réponse 200 pour accuser réception à Stripe
+    // Répondre à Stripe pour confirmer la réception
     res.json({ received: true });
 }
 
-// --- RULE SHARING ENDPOINTS ---
+// Fonction pour envoyer un email d'activation
+async function sendActivationEmail(email, planName) {
+    if (!process.env.SENDGRID_API_KEY) {
+        console.log('SendGrid non configuré, email non envoyé');
+        return;
+    }
+
+    const msg = {
+        to: email,
+        from: process.env.EMAIL_FROM || 'noreply@yourdomain.com',
+        subject: '🎉 Votre compte Premium est activé !',
+        text: `Félicitations ! Votre compte a été mis à niveau vers le plan ${planName}.`,
+        html: `
+            <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+                <h2>🎉 Félicitations !</h2>
+                <p>Votre compte a été mis à niveau avec succès vers le plan <strong>${planName}</strong>.</p>
+                <p>Vous pouvez maintenant profiter de toutes les fonctionnalités exclusives.</p>
+                <p>Merci pour votre confiance !</p>
+            </div>
+        `
+    };
+
+    try {
+        await sgMail.send(msg);
+        console.log(`� Email de confirmation envoyé à ${email}`);
+    } catch (error) {
+        console.error('❌ Erreur lors de l\'envoi de l\'email:', error);
+    }
+}
 
 /**
  * 6. Share a rule with another user
