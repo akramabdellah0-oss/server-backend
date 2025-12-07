@@ -344,7 +344,6 @@ async function handleStripeWebhook(req, res) {
         }
 
         try {
-            // Déterminer le plan en fonction du prix
             let planName = 'Pro'; // Par défaut
             
             // Si vous avez des IDs de prix spécifiques pour différents plans
