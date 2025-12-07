@@ -1055,13 +1055,99 @@ app.get('/api/emergency-activate', (req, res) => {
     });
 });
 
+/**
+ * 8. Delete user from database
+ * Usage: DELETE /api/delete-user?email=user@example.com
+ */
+app.delete('/api/delete-user', (req, res) => {
+    const { email } = req.query;
+    
+    if (!email) {
+        console.error('❌ Delete user: Email required');
+        return res.status(400).json({ error: 'Email required' });
+    }
+    
+    console.log(`🗑️ Deleting user: ${email}`);
+    
+    // Delete from subscriptions
+    if (userSubscriptions[email]) {
+        delete userSubscriptions[email];
+        console.log(`✅ Deleted from subscriptions`);
+    }
+    
+    // Delete from verification codes
+    if (verificationCodes[email]) {
+        delete verificationCodes[email];
+        console.log(`✅ Deleted from verification codes`);
+    }
+    
+    // Save to file
+    saveDataToFile();
+    
+    console.log(`✅ User deleted: ${email}`);
+    
+    res.json({
+        success: true,
+        message: `User ${email} deleted from database`
+    });
+});
+
+/**
+ * 9. Delete Stripe customer
+ * Usage: DELETE /api/delete-stripe-customer?email=user@example.com
+ */
+app.delete('/api/delete-stripe-customer', async (req, res) => {
+    const { email } = req.query;
+    
+    if (!email) {
+        console.error('❌ Delete Stripe customer: Email required');
+        return res.status(400).json({ error: 'Email required' });
+    }
+    
+    try {
+        console.log(`🗑️ Deleting Stripe customer for: ${email}`);
+        
+        // Find customer by email
+        const customers = await stripe.customers.list({ email });
+        
+        if (customers.data.length === 0) {
+            console.log('⚠️ No Stripe customer found for:', email);
+            return res.json({ 
+                success: true,
+                message: 'No Stripe customer found',
+                count: 0
+            });
+        }
+        
+        // Delete each customer
+        let deletedCount = 0;
+        for (const customer of customers.data) {
+            await stripe.customers.del(customer.id);
+            console.log(`✅ Deleted Stripe customer: ${customer.id}`);
+            deletedCount++;
+        }
+        
+        res.json({
+            success: true,
+            message: `Deleted ${deletedCount} Stripe customer(s) for ${email}`,
+            count: deletedCount
+        });
+    } catch (error) {
+        console.error('❌ Error deleting Stripe customer:', error.message);
+        res.status(500).json({ 
+            error: error.message,
+            success: false
+        });
+    }
+});
+
 // Start the server
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
     console.log(`🚀 Server running on port ${PORT}`);
     console.log(`📧 Email service: ${SENDGRID_API_KEY ? 'SendGrid (API Ready)' : 'Disabled - No API Key'}`);
     console.log(`💳 Payment service: ${STRIPE_SECRET_KEY ? 'Stripe (Ready)' : 'Disabled - No API Key'}`);
-    console.log(`� Endpoints:`);
+    console.log(`🔑 Endpoints:`);
     console.log(`   POST /api/send-verification-code`);
     console.log(`   POST /api/verify-code`);
     console.log(`   GET  /api/check-license`);
@@ -1073,4 +1159,6 @@ app.listen(PORT, () => {
     console.log(`   GET  /payment-success`);
     console.log(`   GET  /payment-cancelled`);
     console.log(`   GET  /api/test-subscription`);
+    console.log(`   DELETE /api/delete-user`);
+    console.log(`   DELETE /api/delete-stripe-customer`);
 });
