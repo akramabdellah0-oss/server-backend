@@ -272,6 +272,42 @@ app.get('/api/check-license', (req, res) => {
 });
 
 /**
+ * 3.5 Force Activate Plan (For Testing/Emergency)
+ * Usage: /api/force-activate?email=user@example.com&plan=Plus
+ */
+app.get('/api/force-activate', (req, res) => {
+    const { email, plan } = req.query;
+    
+    if (!email) {
+        console.error('❌ Force activate: Email required');
+        return res.status(400).json({ error: 'Email required' });
+    }
+    
+    const validPlan = plan === 'Plus' || plan === 'Pro' ? plan : 'Pro';
+    
+    console.log(`⚡ Force activating ${validPlan} plan for ${email}`);
+    
+    userSubscriptions[email] = {
+        isPremium: true,
+        plan: validPlan,
+        activatedAt: new Date().toISOString(),
+        lastPayment: new Date().toISOString(),
+        status: 'active'
+    };
+    
+    // Save to file
+    saveDataToFile();
+    
+    console.log(`✅ User activated: ${email} (${validPlan})`);
+    
+    res.json({
+        success: true,
+        message: `${validPlan} plan activated for ${email}`,
+        user: userSubscriptions[email]
+    });
+});
+
+/**
  * 4. Create Checkout Session (Called by Pricing.tsx)
  * This is the REAL implementation using Stripe.
  */
