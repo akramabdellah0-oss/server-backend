@@ -294,7 +294,8 @@ app.post('/api/create-checkout-session', async (req, res) => {
             // Associer la session à l'e-mail de l'utilisateur
             customer_email: userId,
             metadata: {
-                user_id: userId
+                user_id: userId,
+                price_id: priceId  // Store price ID for webhook to identify plan
             }
         });
 
@@ -345,15 +346,44 @@ async function handleStripeWebhook(req, res) {
 
         try {
             let planName = 'Pro'; // Par défaut
+            let priceId = null;
             
-            // Si vous avez des IDs de prix spécifiques pour différents plans
+            // Try to get price ID from line_items
             if (session.line_items && session.line_items.data && session.line_items.data[0]) {
-                const priceId = session.line_items.data[0].price.id;
-                // Mettez à jour cette logique selon vos IDs de prix Stripe
-                if (priceId === 'price_123') planName = 'Basic';
-                if (priceId === 'price_456') planName = 'Pro';
-                if (priceId === 'price_789') planName = 'Enterprise';
+                const lineItem = session.line_items.data[0];
+                console.log('💰 Full line item:', JSON.stringify(lineItem, null, 2));
+                
+                // Try to get price ID from different possible locations
+                priceId = lineItem.price?.id || lineItem.price;
+                console.log('💰 Extracted Price ID from line_items:', priceId);
+            } else {
+                console.log('⚠️ No line items found in session');
             }
+            
+            // If no price ID found, try to get it from metadata (fallback)
+            if (!priceId && session.metadata && session.metadata.price_id) {
+                priceId = session.metadata.price_id;
+                console.log('💰 Extracted Price ID from metadata:', priceId);
+            }
+            
+            // Determine plan based on price ID
+            if (priceId) {
+                console.log('🔍 Checking price ID:', priceId);
+                if (priceId === 'price_1SXINCJdBDLWAyB09C5II34Q') {
+                    planName = 'Plus';
+                    console.log('🏷️ Detected Plus plan');
+                } else if (priceId === 'price_1SXIM2JdBDLWAyB0cVOcC25x') {
+                    planName = 'Pro';
+                    console.log('🏷️ Detected Pro plan');
+                } else {
+                    console.log('⚠️ Unknown price ID, using default Pro plan');
+                    console.log('❓ Unrecognized price ID:', priceId);
+                }
+            } else {
+                console.log('⚠️ No price ID found anywhere, using default Pro plan');
+            }
+            
+            console.log('💾 Full session object:', JSON.stringify(session, null, 2));
 
             // Mettre à jour le statut de l'utilisateur
             userSubscriptions[customerEmail] = {
