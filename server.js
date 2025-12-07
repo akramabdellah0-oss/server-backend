@@ -14,6 +14,10 @@ require('dotenv').config();
 
 const app = express();
 
+// --- SERVER URL CONFIGURATION ---
+const SERVER_URL = process.env.SERVER_URL || 'https://server-backend-fuwj.onrender.com';
+console.log('🌐 Server URL:', SERVER_URL);
+
 // --- FIX FOR RENDER/LOAD BALANCERS ---
 // Tell Express to trust the proxy (Render Load Balancer) so rate-limiter gets the real IP
 // This fixes the "ValidationError: The 'X-Forwarded-For' header is set..." error.
@@ -312,13 +316,14 @@ app.get('/api/force-activate', (req, res) => {
  * This is the REAL implementation using Stripe.
  */
 app.post('/api/create-checkout-session', async (req, res) => {
-    const { priceId, userId } = req.body;
-    console.log('💳 Creating checkout session with:', { priceId, userId });
+    const { priceId, userId, extensionId } = req.body;
+    console.log('💳 Creating checkout session with:', { priceId, userId, extensionId });
 
     // Note: Stripe cannot redirect to chrome-extension:// URLs directly
     // We need to redirect to a web page that can then communicate with the extension
-    const successUrl = SERVER_URL + '/payment-success?payment_status=success&extension_id=' + chrome.runtime.id;
-    const cancelUrl = SERVER_URL + '/payment-cancelled?payment_status=cancelled&extension_id=' + chrome.runtime.id;
+    const extId = extensionId || 'unknown';
+    const successUrl = SERVER_URL + '/payment-success?payment_status=success&extension_id=' + extId;
+    const cancelUrl = SERVER_URL + '/payment-cancelled?payment_status=cancelled&extension_id=' + extId;
 
     try {
         // Create a new checkout session with Stripe
