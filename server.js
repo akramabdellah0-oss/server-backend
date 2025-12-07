@@ -276,8 +276,14 @@ app.get('/api/check-license', (req, res) => {
  * This is the REAL implementation using Stripe.
  */
 app.post('/api/create-checkout-session', async (req, res) => {
-    const { priceId, userId, successUrl, cancelUrl } = req.body;
-    console.log('💳 Creating checkout session with:', { priceId, userId, successUrl, cancelUrl });
+    const { priceId, userId } = req.body;
+    console.log('💳 Creating checkout session with:', { priceId, userId });
+
+    // Note: Stripe cannot redirect to chrome-extension:// URLs directly
+    // We need to redirect to a web page that can then communicate with the extension
+    const successUrl = SERVER_URL + '/payment-success?payment_status=success&extension_id=' + chrome.runtime.id;
+    const cancelUrl = SERVER_URL + '/payment-cancelled?payment_status=cancelled&extension_id=' + chrome.runtime.id;
+
     try {
         // Create a new checkout session with Stripe
         const session = await stripe.checkout.sessions.create({
