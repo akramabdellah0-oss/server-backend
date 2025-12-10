@@ -718,10 +718,69 @@ app.get('/api/force-activate', (req, res) => {
 /**
  * 4. Create Checkout Session (Called by Pricing.tsx)
  * This is the REAL implementation using Stripe.
+ * NOW WITH DEVICE BINDING SECURITY: Checks if email already has active subscription
  */
 app.post('/api/create-checkout-session', async (req, res) => {
-    const { priceId, userId, extensionId } = req.body;
-    console.log('💳 Creating checkout session with:', { priceId, userId, extensionId });
+    const { priceId, userId, extensionId, installationId } = req.body;
+    console.log('💳 Creating checkout session with:', { priceId, userId, extensionId, installationId });
+
+    // Validate required fields
+    if (!userId) {
+        return res.status(400).json({ error: 'Email is required' });
+    }
+
+    if (!installationId) {
+        console.warn('⚠️ No installation ID provided - this is a security risk');
+    }
+
+    // 🔒 SECURITY CHECK: Does this email already have an active subscription?
+    if (stripe) {
+        try {
+            const customers = await stripe.customers.list({
+                email: userId,
+                limit: 1
+            });
+
+            if (customers.data.length > 0) {
+                const customer = customers.data[0];
+                console.log('👤 Existing customer found:', customer.id);
+
+                // Check for active subscriptions
+                const subscriptions = await stripe.subscriptions.list({
+                    customer: customer.id,
+                    status: 'active',
+                    limit: 1
+                });
+
+                if (subscriptions.data.length > 0) {
+                    const existingSubscription = subscriptions.data[0];
+                    console.log('⚠️ User already has active subscription:', existingSubscription.id);
+
+                    // Check if installation ID matches (if stored)
+                    const storedInstallationId = customer.metadata?.installation_id;
+
+                    if (storedInstallationId && storedInstallationId !== installationId) {
+                        console.log('🚫 DEVICE MISMATCH! Stored:', storedInstallationId, 'Requested:', installationId);
+                        return res.status(403).json({
+                            error: 'This email is linked to another device. Please use the Stripe portal to manage your subscription.',
+                            code: 'DEVICE_MISMATCH'
+                        });
+                    }
+
+                    // Same device trying to subscribe again - redirect to portal
+                    console.log('ℹ️ Same device, redirecting to portal for plan management');
+                    return res.status(409).json({
+                        error: 'You already have an active subscription. Use the customer portal to manage your plan.',
+                        code: 'ALREADY_SUBSCRIBED',
+                        portalUrl: '/api/create-portal-session'
+                    });
+                }
+            }
+        } catch (stripeError) {
+            console.error('❌ Stripe check error:', stripeError.message);
+            // Continue with checkout if check fails - better UX than blocking
+        }
+    }
 
     // Note: Stripe cannot redirect to chrome-extension:// URLs directly
     // We need to redirect to a web page that can then communicate with the extension
@@ -740,18 +799,17 @@ app.post('/api/create-checkout-session', async (req, res) => {
                 },
             ],
             mode: 'subscription',
-            success_url: successUrl, // URL de redirection en cas de succès
-            cancel_url: cancelUrl,   // URL de redirection en cas d'annulation
-            // Associer la session à l'e-mail de l'utilisateur
+            success_url: successUrl,
+            cancel_url: cancelUrl,
             customer_email: userId,
             metadata: {
                 user_id: userId,
-                price_id: priceId  // Store price ID for webhook to identify plan
+                price_id: priceId,
+                installation_id: installationId || 'unknown'  // 🔑 Store for device binding
             }
         });
 
         console.log(`✅ Stripe session created: ${session.id}`);
-        // Renvoyer l'URL de la session de paiement au client
         res.json({ url: session.url });
 
     } catch (error) {
@@ -863,6 +921,10 @@ async function handleStripeWebhook(req, res) {
                 console.log('💰 Extracted Price ID from metadata:', priceId);
             }
 
+            // 🔑 Get installation ID from metadata for device binding
+            const installationId = session.metadata?.installation_id;
+            console.log('🔑 Installation ID from session:', installationId);
+
             // Determine plan based on price ID
             if (priceId) {
                 console.log('🔍 Checking price ID:', priceId);
@@ -882,19 +944,35 @@ async function handleStripeWebhook(req, res) {
 
             console.log('💾 Full session object:', JSON.stringify(session, null, 2));
 
+            // 🔑 Store installation ID in Stripe customer metadata for device binding
+            if (session.customer && installationId && installationId !== 'unknown') {
+                try {
+                    await stripe.customers.update(session.customer, {
+                        metadata: {
+                            installation_id: installationId
+                        }
+                    });
+                    console.log('✅ Installation ID stored in Stripe customer metadata');
+                } catch (metadataError) {
+                    console.error('⚠️ Could not update customer metadata:', metadataError.message);
+                }
+            }
+
             // Mettre à jour le statut de l'utilisateur
             userSubscriptions[customerEmail] = {
                 isPremium: true,
                 plan: planName,
                 activatedAt: new Date().toISOString(),
                 lastPayment: new Date().toISOString(),
-                status: 'active'
+                status: 'active',
+                installationId: installationId || null  // 🔑 Store locally too
             };
 
             // Sauvegarder les données
             await saveDataToFile();
 
             console.log(`✅ Premium activé pour: ${customerEmail} (${planName})`);
+            console.log(`🔑 Device binding: ${installationId}`);
 
             // Envoyer un email de confirmation
             await sendActivationEmail(customerEmail, planName);
