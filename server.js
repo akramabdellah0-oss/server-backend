@@ -553,6 +553,133 @@ app.get('/api/check-license', async (req, res) => {
 });
 
 /**
+ * 3.4 Check Email Status (For upgrade/downgrade flow)
+ * Called before payment to check if email already exists and has a subscription
+ */
+app.get('/api/check-email-status', async (req, res) => {
+    const { email } = req.query;
+
+    console.log('📧 Checking email status for:', email);
+
+    if (!email) {
+        return res.status(400).json({ error: 'Email is required' });
+    }
+
+    // Decode the email if it's encoded
+    let decodedEmail = email;
+    try {
+        decodedEmail = decodeURIComponent(email);
+    } catch (decodeError) {
+        console.log('⚠️ Could not decode email, using original:', email);
+    }
+
+    // First check local database
+    const localUser = userSubscriptions[decodedEmail];
+
+    // If user exists locally with premium status, return that
+    if (localUser && localUser.isPremium) {
+        console.log(`✅ Email ${decodedEmail} found locally with plan: ${localUser.plan}`);
+        return res.json({
+            exists: true,
+            isPremium: true,
+            plan: localUser.plan || 'Pro',
+            stripeCustomerId: localUser.stripeCustomerId || null,
+            stripeSubscriptionId: localUser.stripeSubscriptionId || null,
+            status: localUser.status || 'active'
+        });
+    }
+
+    // Verify against Stripe for real-time status
+    if (stripe) {
+        try {
+            const customers = await stripe.customers.list({
+                email: decodedEmail,
+                limit: 1
+            });
+
+            if (customers.data.length > 0) {
+                const customer = customers.data[0];
+                console.log(`👤 Found Stripe customer: ${customer.id}`);
+
+                // Check for active subscriptions
+                const subscriptions = await stripe.subscriptions.list({
+                    customer: customer.id,
+                    status: 'active',
+                    limit: 1
+                });
+
+                if (subscriptions.data.length > 0) {
+                    const subscription = subscriptions.data[0];
+                    const priceId = subscription.items?.data[0]?.price?.id;
+                    let planName = 'Pro';
+
+                    if (priceId === 'price_1SXINCJdBDLWAyB09C5II34Q') {
+                        planName = 'Plus';
+                    } else if (priceId === 'price_1SXIM2JdBDLWAyB0cVOcC25x') {
+                        planName = 'Pro';
+                    }
+
+                    console.log(`✅ Email ${decodedEmail} has active subscription: ${planName}`);
+
+                    // Update local cache
+                    userSubscriptions[decodedEmail] = {
+                        isPremium: true,
+                        plan: planName,
+                        stripeCustomerId: customer.id,
+                        stripeSubscriptionId: subscription.id,
+                        status: subscription.status,
+                        verifiedAt: new Date().toISOString()
+                    };
+                    saveDataToFile();
+
+                    return res.json({
+                        exists: true,
+                        isPremium: true,
+                        plan: planName,
+                        stripeCustomerId: customer.id,
+                        stripeSubscriptionId: subscription.id,
+                        status: subscription.status
+                    });
+                }
+
+                // Customer exists but no active subscription
+                console.log(`⚠️ Email ${decodedEmail} exists in Stripe but no active subscription`);
+                return res.json({
+                    exists: true,
+                    isPremium: false,
+                    plan: 'Free',
+                    stripeCustomerId: customer.id,
+                    status: 'no_active_subscription'
+                });
+            }
+        } catch (stripeError) {
+            console.error('❌ Stripe check error:', stripeError.message);
+            // Continue with local data if Stripe fails
+        }
+    }
+
+    // User exists locally but is not premium
+    if (localUser) {
+        console.log(`📧 Email ${decodedEmail} exists locally with Free plan`);
+        return res.json({
+            exists: true,
+            isPremium: false,
+            plan: localUser.plan || 'Free',
+            status: localUser.status || 'free'
+        });
+    }
+
+    // Email does not exist anywhere
+    console.log(`🆕 Email ${decodedEmail} is new (not found)`);
+    return res.json({
+        exists: false,
+        isPremium: false,
+        plan: null,
+        status: 'new_user'
+    });
+});
+
+/**
  * 3.5 Force Activate Plan (For Testing/Emergency)
  * Usage: /api/force-activate?email=user@example.com&plan=Plus
  */
@@ -630,6 +757,52 @@ app.post('/api/create-checkout-session', async (req, res) => {
     } catch (error) {
         console.error('❌ Stripe Error:', error.message);
         res.status(500).json({ error: 'Failed to create payment session.' });
+    }
+});
+
+/**
+ * 4.5 Create Customer Portal Session (For subscription management)
+ * Allows existing customers to upgrade/downgrade/cancel their subscription
+ */
+app.post('/api/create-portal-session', async (req, res) => {
+    const { email } = req.body;
+    console.log('🔧 Creating portal session for:', email);
+
+    if (!email) {
+        return res.status(400).json({ error: 'Email is required' });
+    }
+
+    if (!stripe) {
+        return res.status(500).json({ error: 'Stripe not configured' });
+    }
+
+    try {
+        // Find customer in Stripe by email
+        const customers = await stripe.customers.list({
+            email: email,
+            limit: 1
+        });
+
+        if (customers.data.length === 0) {
+            console.log('❌ No Stripe customer found for:', email);
+            return res.status(404).json({ error: 'No customer found with this email' });
+        }
+
+        const customer = customers.data[0];
+        console.log('👤 Found Stripe customer:', customer.id);
+
+        // Create a portal session
+        const portalSession = await stripe.billingPortal.sessions.create({
+            customer: customer.id,
+            return_url: SERVER_URL + '/payment-success?portal_return=true'
+        });
+
+        console.log('✅ Portal session created:', portalSession.id);
+        res.json({ url: portalSession.url });
+
+    } catch (error) {
+        console.error('❌ Portal session error:', error.message);
+        res.status(500).json({ error: 'Failed to create portal session: ' + error.message });
     }
 });
 
