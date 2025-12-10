@@ -15,11 +15,11 @@ require('dotenv').config();
 const app = express();
 
 // --- SERVER URL CONFIGURATION ---
-const SERVER_URL = process.env.SERVER_URL || 'https://server-backend-fuwj.onrender.com';
+const SERVER_URL = process.env.SERVER_URL || 'https://thoughtful-liza-laguasetta-ac137d0b.koyeb.app';
 console.log('🌐 Server URL:', SERVER_URL);
 
-// --- FIX FOR RENDER/LOAD BALANCERS ---
-// Tell Express to trust the proxy (Render Load Balancer) so rate-limiter gets the real IP
+// --- FIX FOR KOYEB/LOAD BALANCERS ---
+// Tell Express to trust the proxy (Koyeb Load Balancer) so rate-limiter gets the real IP
 // This fixes the "ValidationError: The 'X-Forwarded-For' header is set..." error.
 app.set('trust proxy', 1);
 
