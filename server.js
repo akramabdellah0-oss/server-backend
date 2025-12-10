@@ -416,8 +416,9 @@ app.post('/api/verify-code', (req, res) => {
 
 /**
  * 3. Check License Status (Called by App.tsx)
+ * NOW VERIFIES AGAINST STRIPE IN REAL-TIME
  */
-app.get('/api/check-license', (req, res) => {
+app.get('/api/check-license', async (req, res) => {
     const { user_id } = req.query; // This is the email
 
     console.log('🎫 License check request for user:', user_id);
@@ -436,14 +437,112 @@ app.get('/api/check-license', (req, res) => {
         console.log('⚠️ Could not decode user ID, using original:', user_id);
     }
 
-    const user = userSubscriptions[decodedUserId];
+    // ALWAYS verify against Stripe if available
+    if (stripe) {
+        try {
+            console.log('🔍 Verifying subscription with Stripe for:', decodedUserId);
 
-    console.log('👤 User subscription data:', user);
-    console.log('📋 All users in database:', Object.keys(userSubscriptions));
+            // Find customer in Stripe by email
+            const customers = await stripe.customers.list({
+                email: decodedUserId,
+                limit: 1
+            });
+
+            if (customers.data.length === 0) {
+                console.log('⚠️ No Stripe customer found for:', decodedUserId);
+                // No Stripe customer = free user, update local cache
+                userSubscriptions[decodedUserId] = {
+                    isPremium: false,
+                    plan: 'Free',
+                    verifiedAt: new Date().toISOString(),
+                    source: 'stripe-verification'
+                };
+                saveDataToFile();
+
+                return res.json({ is_premium: false, plan: 'Free' });
+            }
+
+            const customer = customers.data[0];
+            console.log('👤 Found Stripe customer:', customer.id);
+
+            // Check for active subscriptions
+            const subscriptions = await stripe.subscriptions.list({
+                customer: customer.id,
+                status: 'active',
+                limit: 1
+            });
+
+            if (subscriptions.data.length === 0) {
+                // Also check for trialing subscriptions
+                const trialingSubscriptions = await stripe.subscriptions.list({
+                    customer: customer.id,
+                    status: 'trialing',
+                    limit: 1
+                });
+
+                if (trialingSubscriptions.data.length === 0) {
+                    console.log('� No active subscription in Stripe for:', decodedUserId);
+                    // No active subscription = downgrade to free
+                    userSubscriptions[decodedUserId] = {
+                        isPremium: false,
+                        plan: 'Free',
+                        verifiedAt: new Date().toISOString(),
+                        stripeCustomerId: customer.id,
+                        source: 'stripe-verification',
+                        note: 'No active subscription found in Stripe'
+                    };
+                    saveDataToFile();
+
+                    return res.json({ is_premium: false, plan: 'Free' });
+                }
+
+                // Has trialing subscription
+                subscriptions.data = trialingSubscriptions.data;
+            }
+
+            // User has active/trialing subscription
+            const subscription = subscriptions.data[0];
+            const priceId = subscription.items?.data[0]?.price?.id;
+            let planName = 'Pro'; // Default
+
+            if (priceId === 'price_1SXINCJdBDLWAyB09C5II34Q') {
+                planName = 'Plus';
+            } else if (priceId === 'price_1SXIM2JdBDLWAyB0cVOcC25x') {
+                planName = 'Pro';
+            }
+
+            console.log(`✅ Stripe verified: ${decodedUserId} has ${planName} (${subscription.status})`);
+
+            // Update local cache
+            userSubscriptions[decodedUserId] = {
+                isPremium: true,
+                plan: planName,
+                verifiedAt: new Date().toISOString(),
+                stripeCustomerId: customer.id,
+                stripeSubscriptionId: subscription.id,
+                status: subscription.status,
+                source: 'stripe-verification'
+            };
+            saveDataToFile();
+
+            return res.json({ is_premium: true, plan: planName });
+
+        } catch (stripeError) {
+            console.error('❌ Stripe verification error:', stripeError.message);
+            // Fall back to local cache on Stripe error
+            console.log('⚠️ Falling back to local cache due to Stripe error');
+        }
+    } else {
+        console.log('⚠️ Stripe not configured, using local cache only');
+    }
+
+    // Fallback: use local cache (only if Stripe verification failed)
+    const user = userSubscriptions[decodedUserId];
+    console.log('👤 User subscription data (from cache):', user);
 
     if (user && user.isPremium) {
         const planData = { is_premium: true, plan: user.plan || 'Pro' };
-        console.log('✅ Returning premium plan:', planData);
+        console.log('✅ Returning premium plan (from cache):', planData);
         return res.json(planData);
     }
 
