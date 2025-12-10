@@ -26,7 +26,7 @@ app.set('trust proxy', 1);
 // --- WEBHOOK PARSING ---
 // Le webhook de Stripe a besoin du "raw body", donc nous utilisons bodyParser.raw
 // pour cet endpoint spécifique, AVANT `express.json()`.
-app.post('/api/stripe-webhook', bodyParser.raw({type: 'application/json'}), handleStripeWebhook);
+app.post('/api/stripe-webhook', bodyParser.raw({ type: 'application/json' }), handleStripeWebhook);
 
 // Middlewares
 app.use(cors({ origin: '*' })); // Allow all origins for development. Restrict in production.
@@ -61,13 +61,13 @@ function loadDataFromFile() {
         if (fs.existsSync(DATA_FILE)) {
             const data = fs.readFileSync(DATA_FILE, 'utf8');
             const loadedData = JSON.parse(data);
-            
+
             // Load user subscriptions
             if (loadedData.userSubscriptions) {
                 Object.assign(userSubscriptions, loadedData.userSubscriptions);
                 console.log('📂 User subscriptions loaded from file:', Object.keys(userSubscriptions).length, 'users');
             }
-            
+
             // Load verification codes
             if (loadedData.verificationCodes) {
                 Object.assign(verificationCodes, loadedData.verificationCodes);
@@ -116,6 +116,184 @@ const sendCodeLimiter = rateLimit({
     message: "Too many requests, please try again later.",
 });
 
+// --- HEALTH CHECK & ADMIN ENDPOINTS ---
+
+/**
+ * Health check endpoint - keeps server alive on Render free tier
+ */
+app.get('/health', (req, res) => {
+    res.json({
+        status: 'ok',
+        timestamp: new Date().toISOString(),
+        uptime: process.uptime(),
+        users: Object.keys(userSubscriptions).length
+    });
+});
+
+/**
+ * List all users in database (admin endpoint)
+ */
+app.get('/api/admin/users', (req, res) => {
+    console.log('📋 Admin: Listing all users');
+    res.json({
+        count: Object.keys(userSubscriptions).length,
+        users: userSubscriptions
+    });
+});
+
+/**
+ * Delete a specific user from the database
+ */
+app.delete('/api/admin/users/:email', (req, res) => {
+    const email = decodeURIComponent(req.params.email);
+    console.log(`🗑️ Admin: Deleting user ${email}`);
+
+    if (userSubscriptions[email]) {
+        const deletedUser = userSubscriptions[email];
+        delete userSubscriptions[email];
+        saveDataToFile();
+
+        console.log(`✅ User ${email} deleted`);
+        res.json({
+            success: true,
+            message: `User ${email} deleted`,
+            deletedUser
+        });
+    } else {
+        console.log(`⚠️ User ${email} not found`);
+        res.status(404).json({
+            error: 'User not found',
+            email
+        });
+    }
+});
+
+/**
+ * Clear all users from database (dangerous!)
+ */
+app.delete('/api/admin/users', (req, res) => {
+    const { confirm } = req.query;
+
+    if (confirm !== 'yes-delete-all') {
+        return res.status(400).json({
+            error: 'Add ?confirm=yes-delete-all to confirm this dangerous action'
+        });
+    }
+
+    console.log('🗑️ Admin: Clearing ALL users');
+    const count = Object.keys(userSubscriptions).length;
+
+    // Clear all subscriptions
+    for (const email in userSubscriptions) {
+        delete userSubscriptions[email];
+    }
+
+    saveDataToFile();
+
+    console.log(`✅ Deleted ${count} users`);
+    res.json({
+        success: true,
+        message: `Deleted ${count} users`,
+        remaining: Object.keys(userSubscriptions).length
+    });
+});
+
+/**
+ * Sync a user's subscription status with Stripe
+ */
+app.get('/api/admin/sync-user/:email', async (req, res) => {
+    const email = decodeURIComponent(req.params.email);
+    console.log(`🔄 Admin: Syncing user ${email} with Stripe`);
+
+    if (!stripe) {
+        return res.status(500).json({ error: 'Stripe not configured' });
+    }
+
+    try {
+        // Find customer in Stripe by email
+        const customers = await stripe.customers.list({ email: email, limit: 1 });
+
+        if (customers.data.length === 0) {
+            // No Stripe customer found, reset to free
+            userSubscriptions[email] = {
+                isPremium: false,
+                plan: 'Free',
+                syncedAt: new Date().toISOString(),
+                note: 'No Stripe customer found'
+            };
+            saveDataToFile();
+
+            return res.json({
+                success: true,
+                message: 'No Stripe customer found, user set to Free',
+                user: userSubscriptions[email]
+            });
+        }
+
+        const customer = customers.data[0];
+
+        // Get active subscriptions for this customer
+        const subscriptions = await stripe.subscriptions.list({
+            customer: customer.id,
+            status: 'active',
+            limit: 1
+        });
+
+        if (subscriptions.data.length === 0) {
+            // No active subscription, reset to free
+            userSubscriptions[email] = {
+                isPremium: false,
+                plan: 'Free',
+                syncedAt: new Date().toISOString(),
+                stripeCustomerId: customer.id,
+                note: 'No active subscription in Stripe'
+            };
+            saveDataToFile();
+
+            return res.json({
+                success: true,
+                message: 'No active subscription found, user set to Free',
+                user: userSubscriptions[email]
+            });
+        }
+
+        // User has active subscription
+        const subscription = subscriptions.data[0];
+        const priceId = subscription.items.data[0]?.price?.id;
+        let planName = 'Pro';
+
+        if (priceId === 'price_1SXINCJdBDLWAyB09C5II34Q') {
+            planName = 'Plus';
+        } else if (priceId === 'price_1SXIM2JdBDLWAyB0cVOcC25x') {
+            planName = 'Pro';
+        }
+
+        userSubscriptions[email] = {
+            isPremium: true,
+            plan: planName,
+            syncedAt: new Date().toISOString(),
+            stripeCustomerId: customer.id,
+            stripeSubscriptionId: subscription.id,
+            status: subscription.status
+        };
+        saveDataToFile();
+
+        console.log(`✅ User ${email} synced: ${planName}`);
+        res.json({
+            success: true,
+            message: `User synced with Stripe: ${planName}`,
+            user: userSubscriptions[email]
+        });
+
+    } catch (error) {
+        console.error('❌ Sync error:', error);
+        res.status(500).json({
+            error: 'Failed to sync with Stripe',
+            details: error.message
+        });
+    }
+});
+
 // --- API ENDPOINTS ---
 
 /**
@@ -139,7 +317,7 @@ app.post('/api/send-verification-code', sendCodeLimiter, async (req, res) => {
 
     // Save the code with a 10-minute expiration
     verificationCodes[email] = { code, expiresAt: Date.now() + 10 * 60 * 1000 };
-    
+
     // Save data to file
     saveDataToFile();
 
@@ -148,14 +326,14 @@ app.post('/api/send-verification-code', sendCodeLimiter, async (req, res) => {
         console.warn(`⚠️  SendGrid not configured. Mock code for ${email}: ${code}`);
         // In development, you can return the code for testing
         if (process.env.NODE_ENV !== 'production') {
-            return res.json({ 
-                success: true, 
+            return res.json({
+                success: true,
                 message: 'Development mode: Email service not configured.',
                 debugCode: code // Only return in non-production!
             });
         } else {
-            return res.status(503).json({ 
-                error: 'Email service is temporarily unavailable. Please try again later.' 
+            return res.status(503).json({
+                error: 'Email service is temporarily unavailable. Please try again later.'
             });
         }
     }
@@ -198,7 +376,7 @@ app.post('/api/send-verification-code', sendCodeLimiter, async (req, res) => {
             console.error(error.response.body);
         }
 
-        res.status(500).json({ 
+        res.status(500).json({
             error: 'Failed to send verification code. Please try again.',
             details: process.env.NODE_ENV !== 'production' ? error.message : undefined
         });
@@ -224,11 +402,11 @@ app.post('/api/verify-code', (req, res) => {
 
     // Code is valid. Initialize user in DB if not exists.
     delete verificationCodes[email];
-    
+
     if (!userSubscriptions[email]) {
-        userSubscriptions[email] = { isPremium: false, plan: 'Free' };  
+        userSubscriptions[email] = { isPremium: false, plan: 'Free' };
     }
-    
+
     // Save data to file
     saveDataToFile();
 
@@ -241,9 +419,9 @@ app.post('/api/verify-code', (req, res) => {
  */
 app.get('/api/check-license', (req, res) => {
     const { user_id } = req.query; // This is the email
-    
+
     console.log('🎫 License check request for user:', user_id);
-    
+
     if (!user_id) {
         console.log('❌ No user_id provided');
         return res.status(400).json({ error: 'User ID required' });
@@ -259,7 +437,7 @@ app.get('/api/check-license', (req, res) => {
     }
 
     const user = userSubscriptions[decodedUserId];
-    
+
     console.log('👤 User subscription data:', user);
     console.log('📋 All users in database:', Object.keys(userSubscriptions));
 
@@ -281,16 +459,16 @@ app.get('/api/check-license', (req, res) => {
  */
 app.get('/api/force-activate', (req, res) => {
     const { email, plan } = req.query;
-    
+
     if (!email) {
         console.error('❌ Force activate: Email required');
         return res.status(400).json({ error: 'Email required' });
     }
-    
+
     const validPlan = plan === 'Plus' || plan === 'Pro' ? plan : 'Pro';
-    
+
     console.log(`⚡ Force activating ${validPlan} plan for ${email}`);
-    
+
     userSubscriptions[email] = {
         isPremium: true,
         plan: validPlan,
@@ -298,12 +476,12 @@ app.get('/api/force-activate', (req, res) => {
         lastPayment: new Date().toISOString(),
         status: 'active'
     };
-    
+
     // Save to file
     saveDataToFile();
-    
+
     console.log(`✅ User activated: ${email} (${validPlan})`);
-    
+
     res.json({
         success: true,
         message: `${validPlan} plan activated for ${email}`,
@@ -362,7 +540,7 @@ app.post('/api/create-checkout-session', async (req, res) => {
  */
 async function handleStripeWebhook(req, res) {
     console.log('🔔 Stripe webhook received');
-    
+
     const sig = req.headers['stripe-signature'];
     let event;
 
@@ -376,16 +554,16 @@ async function handleStripeWebhook(req, res) {
 
     // Gérer l'événement
     console.log('🔄 Handling event type:', event.type);
-    
+
     if (event.type === 'checkout.session.completed') {
         const session = event.data.object;
         console.log('✅ Checkout session completed');
-        
+
         // Récupérer l'email du client
-        const customerEmail = session.customer_email || 
-                            (session.customer_details && session.customer_details.email) ||
-                            (session.metadata && session.metadata.user_id);
-        
+        const customerEmail = session.customer_email ||
+            (session.customer_details && session.customer_details.email) ||
+            (session.metadata && session.metadata.user_id);
+
         if (!customerEmail) {
             console.error('❌ No email found in session');
             return res.status(400).json({ error: 'No email found in session' });
@@ -394,25 +572,25 @@ async function handleStripeWebhook(req, res) {
         try {
             let planName = 'Pro'; // Par défaut
             let priceId = null;
-            
+
             // Try to get price ID from line_items
             if (session.line_items && session.line_items.data && session.line_items.data[0]) {
                 const lineItem = session.line_items.data[0];
                 console.log('💰 Full line item:', JSON.stringify(lineItem, null, 2));
-                
+
                 // Try to get price ID from different possible locations
                 priceId = lineItem.price?.id || lineItem.price;
                 console.log('💰 Extracted Price ID from line_items:', priceId);
             } else {
                 console.log('⚠️ No line items found in session');
             }
-            
+
             // If no price ID found, try to get it from metadata (fallback)
             if (!priceId && session.metadata && session.metadata.price_id) {
                 priceId = session.metadata.price_id;
                 console.log('💰 Extracted Price ID from metadata:', priceId);
             }
-            
+
             // Determine plan based on price ID
             if (priceId) {
                 console.log('🔍 Checking price ID:', priceId);
@@ -429,7 +607,7 @@ async function handleStripeWebhook(req, res) {
             } else {
                 console.log('⚠️ No price ID found anywhere, using default Pro plan');
             }
-            
+
             console.log('💾 Full session object:', JSON.stringify(session, null, 2));
 
             // Mettre à jour le statut de l'utilisateur
@@ -443,15 +621,132 @@ async function handleStripeWebhook(req, res) {
 
             // Sauvegarder les données
             await saveDataToFile();
-            
+
             console.log(`✅ Premium activé pour: ${customerEmail} (${planName})`);
-            
+
             // Envoyer un email de confirmation
             await sendActivationEmail(customerEmail, planName);
-            
+
         } catch (error) {
             console.error('❌ Error processing webhook:', error);
             return res.status(500).json({ error: 'Internal server error' });
+        }
+    }
+
+    // Handle subscription cancellation/deletion
+    else if (event.type === 'customer.subscription.deleted' ||
+        event.type === 'customer.subscription.canceled') {
+        const subscription = event.data.object;
+        console.log('🚫 Subscription cancelled/deleted:', subscription.id);
+
+        try {
+            // Get customer email from Stripe
+            const customer = await stripe.customers.retrieve(subscription.customer);
+            const customerEmail = customer.email;
+
+            if (customerEmail && userSubscriptions[customerEmail]) {
+                console.log(`🗑️ Removing premium status for: ${customerEmail}`);
+
+                // Downgrade to free plan
+                userSubscriptions[customerEmail] = {
+                    isPremium: false,
+                    plan: 'Free',
+                    cancelledAt: new Date().toISOString(),
+                    previousPlan: userSubscriptions[customerEmail]?.plan || 'Unknown',
+                    status: 'cancelled'
+                };
+
+                saveDataToFile();
+                console.log(`✅ User ${customerEmail} downgraded to Free plan`);
+            } else {
+                console.log(`⚠️ No local subscription found for customer: ${subscription.customer}`);
+            }
+        } catch (error) {
+            console.error('❌ Error handling subscription deletion:', error);
+        }
+    }
+
+    // Handle subscription updates (e.g., plan changes, payment failures)
+    else if (event.type === 'customer.subscription.updated') {
+        const subscription = event.data.object;
+        console.log('🔄 Subscription updated:', subscription.id, 'Status:', subscription.status);
+
+        try {
+            const customer = await stripe.customers.retrieve(subscription.customer);
+            const customerEmail = customer.email;
+
+            if (customerEmail) {
+                // Check if subscription is still active
+                if (subscription.status === 'active' || subscription.status === 'trialing') {
+                    // Subscription is active, ensure user has premium
+                    const priceId = subscription.items?.data[0]?.price?.id;
+                    let planName = 'Pro';
+
+                    if (priceId === 'price_1SXINCJdBDLWAyB09C5II34Q') {
+                        planName = 'Plus';
+                    } else if (priceId === 'price_1SXIM2JdBDLWAyB0cVOcC25x') {
+                        planName = 'Pro';
+                    }
+
+                    userSubscriptions[customerEmail] = {
+                        isPremium: true,
+                        plan: planName,
+                        updatedAt: new Date().toISOString(),
+                        status: subscription.status
+                    };
+
+                    console.log(`✅ Subscription active for ${customerEmail} (${planName})`);
+                } else if (subscription.status === 'past_due' || subscription.status === 'unpaid') {
+                    // Payment failed, mark as inactive
+                    console.log(`⚠️ Payment issue for ${customerEmail}, status: ${subscription.status}`);
+
+                    userSubscriptions[customerEmail] = {
+                        ...userSubscriptions[customerEmail],
+                        isPremium: false,
+                        status: subscription.status,
+                        paymentIssueAt: new Date().toISOString()
+                    };
+                } else if (subscription.status === 'canceled') {
+                    // Subscription cancelled
+                    userSubscriptions[customerEmail] = {
+                        isPremium: false,
+                        plan: 'Free',
+                        cancelledAt: new Date().toISOString(),
+                        status: 'cancelled'
+                    };
+
+                    console.log(`🚫 Subscription cancelled for ${customerEmail}`);
+                }
+
+                saveDataToFile();
+            }
+        } catch (error) {
+            console.error('❌ Error handling subscription update:', error);
+        }
+    }
+
+    // Handle invoice payment failure
+    else if (event.type === 'invoice.payment_failed') {
+        const invoice = event.data.object;
+        console.log('❌ Invoice payment failed:', invoice.id);
+
+        try {
+            const customerEmail = invoice.customer_email;
+
+            if (customerEmail && userSubscriptions[customerEmail]) {
+                console.log(`⚠️ Payment failed for ${customerEmail}`);
+
+                userSubscriptions[customerEmail] = {
+                    ...userSubscriptions[customerEmail],
+                    paymentFailed: true,
+                    paymentFailedAt: new Date().toISOString(),
+                    status: 'payment_failed'
+                };
+
+                saveDataToFile();
+            }
+        } catch (error) {
+            console.error('❌ Error handling payment failure:', error);
         }
     }
 
@@ -521,8 +816,8 @@ app.post('/api/share-rule', (req, res) => {
 
     console.log(`🔗 Rule shared from ${fromEmail} to ${toEmail}, ID: ${shareId}`);
 
-    res.json({ 
-        success: true, 
+    res.json({
+        success: true,
         shareId,
         message: `Rule shared with ${toEmail}`,
         expiresIn: expireMinutes || 60
@@ -557,8 +852,8 @@ app.get('/api/check-shared-rules/:email', (req, res) => {
 
     console.log(`📬 ${userShares.length} shared rule(s) found for ${email}`);
 
-    res.json({ 
-        success: true, 
+    res.json({
+        success: true,
         shares: userShares,
         count: userShares.length
     });
@@ -610,7 +905,7 @@ setInterval(cleanupExpiredShares, 10 * 60 * 1000);
 app.get('/payment-success', (req, res) => {
     const { extension_id } = req.query;
     console.log('💰 Payment success redirect for extension:', extension_id);
-    
+
     // Serve a simple HTML page with auto-close functionality
     res.send(`
 <!DOCTYPE html>
@@ -667,7 +962,7 @@ app.get('/payment-success', (req, res) => {
 app.get('/payment-cancelled', (req, res) => {
     const { extension_id } = req.query;
     console.log('❌ Payment cancelled for extension:', extension_id);
-    
+
     // Serve a simple HTML page with auto-close functionality
     res.send(`
 <!DOCTYPE html>
@@ -723,18 +1018,18 @@ app.get('/api/test-subscription', (req, res) => {
     if (!email) {
         return res.status(400).json({ error: 'Email required' });
     }
-    
+
     const planName = plan || 'Pro';
     userSubscriptions[email] = {
         isPremium: true,
         plan: planName
     };
-    
+
     console.log(`🧪 TEST: Subscription ACTIVATED for ${email} (${planName})`);
-    
+
     // Save data to file
     saveDataToFile();
-    
+
     res.json({ success: true, message: `Subscription activated for ${email}` });
 });
 
@@ -744,19 +1039,19 @@ app.get('/api/check-user-status', (req, res) => {
     if (!email) {
         return res.status(400).json({ error: 'Email required' });
     }
-    
+
     const user = userSubscriptions[email];
     console.log(`🔍 Checking subscription status for ${email}:`, user);
-    
+
     if (user && user.isPremium) {
-        return res.json({ 
-            is_premium: true, 
+        return res.json({
+            is_premium: true,
             plan: user.plan,
             message: `User ${email} has ${user.plan} subscription`
         });
     } else {
-        return res.json({ 
-            is_premium: false, 
+        return res.json({
+            is_premium: false,
             plan: 'Free',
             message: `User ${email} has no premium subscription`
         });
@@ -769,22 +1064,22 @@ app.get('/api/manual-subscription', (req, res) => {
     if (!email) {
         return res.status(400).json({ error: 'Email required' });
     }
-    
+
     console.log(`🔧 MANUAL SUBSCRIPTION TRIGGER for ${email}`);
     console.log(`🔧 Current subscriptions before update:`, userSubscriptions);
-    
+
     const planName = plan || 'Pro';
     userSubscriptions[email] = {
         isPremium: true,
         plan: planName
     };
-    
+
     console.log(`🔧 MANUAL: Subscription ACTIVATED for ${email} (${planName})`);
     console.log(`🔧 Current subscriptions after update:`, userSubscriptions);
-    
+
     // Save data to file
     saveDataToFile();
-    
+
     // Also save a backup copy for debugging
     try {
         const fs = require('fs');
@@ -800,9 +1095,9 @@ app.get('/api/manual-subscription', (req, res) => {
     } catch (backupError) {
         console.error('❌ Error saving backup:', backupError);
     }
-    
-    res.json({ 
-        success: true, 
+
+    res.json({
+        success: true,
         message: `Subscription manually activated for ${email}`,
         data: {
             email: email,
@@ -817,17 +1112,17 @@ app.get('/api/debug-subscriptions', (req, res) => {
     console.log('🔧 DEBUG: Current subscription data request');
     console.log('🔧 Current userSubscriptions:', userSubscriptions);
     console.log('🔧 Current verificationCodes:', verificationCodes);
-    
+
     // Try to read the data file
     try {
         const fs = require('fs');
         const path = require('path');
         const dataFile = path.join(__dirname, 'app_data.json');
-        
+
         if (fs.existsSync(dataFile)) {
             const fileContent = fs.readFileSync(dataFile, 'utf8');
             const parsedData = JSON.parse(fileContent);
-            
+
             res.json({
                 success: true,
                 message: 'Current subscription data',
@@ -868,29 +1163,29 @@ app.get('/api/debug-subscriptions', (req, res) => {
 // Emergency endpoint to force activate a user's subscription
 app.get('/api/force-activate', (req, res) => {
     const { email, plan } = req.query;
-    
+
     if (!email) {
-        return res.status(400).json({ 
-            success: false, 
-            error: 'Email is required' 
+        return res.status(400).json({
+            success: false,
+            error: 'Email is required'
         });
     }
-    
+
     const planName = plan || 'Pro';
-    
+
     console.log(`🚨 EMERGENCY ACTIVATION for ${email} with plan ${planName}`);
-    
+
     // Activate the subscription
     userSubscriptions[email] = {
         isPremium: true,
         plan: planName
     };
-    
+
     // Save to file
     saveDataToFile();
-    
+
     console.log(`✅ EMERGENCY: Subscription activated for ${email} (${planName})`);
-    
+
     res.json({
         success: true,
         message: `Subscription forcefully activated for ${email} with ${planName} plan`,
@@ -902,38 +1197,38 @@ app.get('/api/force-activate', (req, res) => {
 // Endpoint to manually register and activate a user
 app.get('/api/register-user', (req, res) => {
     const { email, plan } = req.query;
-    
+
     if (!email) {
-        return res.status(400).json({ 
-            success: false, 
-            error: 'Email is required' 
+        return res.status(400).json({
+            success: false,
+            error: 'Email is required'
         });
     }
-    
+
     // Validate email format
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!emailRegex.test(email)) {
-        return res.status(400).json({ 
-            success: false, 
-            error: 'Invalid email format' 
+        return res.status(400).json({
+            success: false,
+            error: 'Invalid email format'
         });
     }
-    
+
     const planName = plan || 'Pro';
-    
+
     console.log(`👤 REGISTERING USER: ${email} with plan ${planName}`);
-    
+
     // Register and activate the subscription
     userSubscriptions[email] = {
         isPremium: true,
         plan: planName
     };
-    
+
     // Save to file
     saveDataToFile();
-    
+
     console.log(`✅ USER REGISTERED: ${email} (${planName})`);
-    
+
     res.json({
         success: true,
         message: `User ${email} registered with ${planName} plan`,
@@ -945,19 +1240,19 @@ app.get('/api/register-user', (req, res) => {
 // Endpoint to check if an email exists in the subscription database
 app.get('/api/check-email-exists', (req, res) => {
     const { email } = req.query;
-    
+
     if (!email) {
-        return res.status(400).json({ 
-            success: false, 
-            error: 'Email is required' 
+        return res.status(400).json({
+            success: false,
+            error: 'Email is required'
         });
     }
-    
+
     console.log(`🔍 Checking if email exists in database: ${email}`);
-    
+
     // Check if email exists
     const user = userSubscriptions[email];
-    
+
     if (user) {
         console.log(`✅ Email found: ${email}`, user);
         res.json({
@@ -980,7 +1275,7 @@ app.get('/api/check-email-exists', (req, res) => {
 // This helps the extension discover which email was used for payment
 app.get('/api/get-recent-payment-email', (req, res) => {
     console.log('🔍 Getting recent payment email');
-    
+
     // Get all premium users
     const premiumUsers = [];
     for (const [email, subscription] of Object.entries(userSubscriptions)) {
@@ -992,9 +1287,9 @@ app.get('/api/get-recent-payment-email', (req, res) => {
             });
         }
     }
-    
+
     console.log(`📋 Found ${premiumUsers.length} premium users`);
-    
+
     if (premiumUsers.length > 0) {
         // Return the first one (in a real implementation, you'd want the most recent)
         const recentUser = premiumUsers[0];
@@ -1015,38 +1310,38 @@ app.get('/api/get-recent-payment-email', (req, res) => {
 // This is for cases where the webhook failed to process
 app.get('/api/emergency-activate', (req, res) => {
     const { email, plan } = req.query;
-    
+
     if (!email) {
-        return res.status(400).json({ 
-            success: false, 
-            error: 'Email is required' 
+        return res.status(400).json({
+            success: false,
+            error: 'Email is required'
         });
     }
-    
+
     // Validate email format
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!emailRegex.test(email)) {
-        return res.status(400).json({ 
-            success: false, 
-            error: 'Invalid email format' 
+        return res.status(400).json({
+            success: false,
+            error: 'Invalid email format'
         });
     }
-    
+
     const planName = plan || 'Pro';
-    
+
     console.log(`🚨 EMERGENCY ACTIVATION for ${email} with plan ${planName}`);
-    
+
     // Activate the subscription
     userSubscriptions[email] = {
         isPremium: true,
         plan: planName
     };
-    
+
     // Save to file
     saveDataToFile();
-    
+
     console.log(`✅ EMERGENCY: Subscription activated for ${email} (${planName})`);
-    
+
     res.json({
         success: true,
         message: `Subscription forcefully activated for ${email} with ${planName} plan`,
@@ -1061,31 +1356,31 @@ app.get('/api/emergency-activate', (req, res) => {
  */
 app.delete('/api/delete-user', (req, res) => {
     const { email } = req.query;
-    
+
     if (!email) {
         console.error('❌ Delete user: Email required');
         return res.status(400).json({ error: 'Email required' });
     }
-    
+
     console.log(`🗑️ Deleting user: ${email}`);
-    
+
     // Delete from subscriptions
     if (userSubscriptions[email]) {
         delete userSubscriptions[email];
         console.log(`✅ Deleted from subscriptions`);
     }
-    
+
     // Delete from verification codes
     if (verificationCodes[email]) {
         delete verificationCodes[email];
         console.log(`✅ Deleted from verification codes`);
     }
-    
+
     // Save to file
     saveDataToFile();
-    
+
     console.log(`✅ User deleted: ${email}`);
-    
+
     res.json({
         success: true,
         message: `User ${email} deleted from database`
@@ -1098,27 +1393,27 @@ app.delete('/api/delete-user', (req, res) => {
  */
 app.delete('/api/delete-stripe-customer', async (req, res) => {
     const { email } = req.query;
-    
+
     if (!email) {
         console.error('❌ Delete Stripe customer: Email required');
         return res.status(400).json({ error: 'Email required' });
     }
-    
+
     try {
         console.log(`🗑️ Deleting Stripe customer for: ${email}`);
-        
+
         // Find customer by email
         const customers = await stripe.customers.list({ email });
-        
+
         if (customers.data.length === 0) {
             console.log('⚠️ No Stripe customer found for:', email);
-            return res.json({ 
+            return res.json({
                 success: true,
                 message: 'No Stripe customer found',
                 count: 0
             });
         }
-        
+
         // Delete each customer
         let deletedCount = 0;
         for (const customer of customers.data) {
@@ -1126,7 +1421,7 @@ app.delete('/api/delete-stripe-customer', async (req, res) => {
             console.log(`✅ Deleted Stripe customer: ${customer.id}`);
             deletedCount++;
         }
-        
+
         res.json({
             success: true,
             message: `Deleted ${deletedCount} Stripe customer(s) for ${email}`,
@@ -1134,7 +1429,7 @@ app.delete('/api/delete-stripe-customer', async (req, res) => {
         });
     } catch (error) {
         console.error('❌ Error deleting Stripe customer:', error.message);
-        res.status(500).json({ 
+        res.status(500).json({
             error: error.message,
             success: false
         });
@@ -1147,11 +1442,11 @@ app.post('/api/clear-database', (req, res) => {
         // Clear in-memory data
         Object.keys(userSubscriptions).forEach(key => delete userSubscriptions[key]);
         Object.keys(verificationCodes).forEach(key => delete verificationCodes[key]);
-        
+
         // Clear file data
         const emptyData = { userSubscriptions: {}, verificationCodes: {} };
         fs.writeFileSync(DATA_FILE, JSON.stringify(emptyData, null, 2));
-        
+
         console.log('✅ Database cleared successfully');
         res.json({ success: true, message: 'Database cleared successfully' });
     } catch (error) {
