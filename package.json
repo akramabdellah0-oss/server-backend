@@ -4,7 +4,8 @@
   "description": "Server for the AutofillClone extension",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+	  "build": "echo 'Skipping build step for backend'"  
   },
   "dependencies": {
     "cors": "^2.8.5",
