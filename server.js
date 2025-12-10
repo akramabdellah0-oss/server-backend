@@ -1141,6 +1141,25 @@ app.delete('/api/delete-stripe-customer', async (req, res) => {
     }
 });
 
+// Clear database endpoint (for development only)
+app.post('/api/clear-database', (req, res) => {
+    try {
+        // Clear in-memory data
+        Object.keys(userSubscriptions).forEach(key => delete userSubscriptions[key]);
+        Object.keys(verificationCodes).forEach(key => delete verificationCodes[key]);
+        
+        // Clear file data
+        const emptyData = { userSubscriptions: {}, verificationCodes: {} };
+        fs.writeFileSync(DATA_FILE, JSON.stringify(emptyData, null, 2));
+        
+        console.log('✅ Database cleared successfully');
+        res.json({ success: true, message: 'Database cleared successfully' });
+    } catch (error) {
+        console.error('❌ Error clearing database:', error);
+        res.status(500).json({ success: false, error: 'Failed to clear database' });
+    }
+});
+
 // Start the server
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
