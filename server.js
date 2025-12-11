@@ -634,6 +634,100 @@ app.get('/api/admin/sync-user/:email', async (req, res) => {
     }
 });
 
+// --- NEW ENDPOINT: Import all customers from Stripe ---
+app.post('/api/admin/sync-stripe-customers', async (req, res) => {
+    console.log('🔄 Admin: Syncing ALL customers from Stripe...');
+
+    if (!stripe) {
+        return res.status(500).json({ error: 'Stripe not configured' });
+    }
+
+    try {
+        // Fetch last 100 customers
+        const customers = await stripe.customers.list({ limit: 100 });
+        console.log(`📡 Fetched ${customers.data.length} customers from Stripe`);
+
+        let stats = { added: 0, updated: 0, skipped: 0 };
+
+        for (const customer of customers.data) {
+            const email = customer.email;
+            if (!email) continue;
+
+            // Check for active subscriptions for this customer
+            const subscriptions = await stripe.subscriptions.list({
+                customer: customer.id,
+                status: 'active',
+                limit: 1
+            });
+
+            let isPremium = false;
+            let planName = 'Free';
+            let subDetails = {};
+
+            if (subscriptions.data.length > 0) {
+                isPremium = true;
+                const sub = subscriptions.data[0];
+                const priceId = sub.items.data[0]?.price?.id;
+
+                if (priceId === 'price_1SXINCJdBDLWAyB09C5II34Q') {
+                    planName = 'Plus';
+                } else if (priceId === 'price_1SXIM2JdBDLWAyB0cVOcC25x') {
+                    planName = 'Pro';
+                } else {
+                    planName = 'Pro'; // Default fallback
+                }
+
+                subDetails = {
+                    stripeCustomerId: customer.id,
+                    stripeSubscriptionId: sub.id,
+                    status: sub.status,
+                    syncedAt: new Date().toISOString()
+                };
+            }
+
+            // Update local DB
+            if (!userSubscriptions[email]) {
+                // New user found in Stripe
+                userSubscriptions[email] = {
+                    isPremium,
+                    plan: isPremium ? planName : 'Free',
+                    ...subDetails,
+                    addedVia: 'stripe-sync-all',
+                    createdAt: new Date(customer.created * 1000).toISOString()
+                };
+                stats.added++;
+                console.log(`✨ Added new user from Stripe: ${email} (${planName})`);
+            } else {
+                // Update existing user if they have a subscription in Stripe
+                if (isPremium) {
+                    userSubscriptions[email] = {
+                        ...userSubscriptions[email],
+                        isPremium: true,
+                        plan: planName,
+                        ...subDetails
+                    };
+                    stats.updated++;
+                } else {
+                    stats.skipped++;
+                }
+            }
+        }
+
+        saveDataToFile();
+        console.log('✅ Sync complete:', stats);
+
+        res.json({
+            success: true,
+            message: `Sync complete: ${stats.added} added, ${stats.updated} updated.`,
+            stats
+        });
+
+    } catch (error) {
+        console.error('❌ Sync All Error:', error);
+        res.status(500).json({ error: 'Failed to sync with Stripe: ' + error.message });
+    }
+});
+
 // --- API ENDPOINTS ---
 
 /**
@@ -1595,12 +1689,10 @@ setInterval(cleanupExpiredShares, 10 * 60 * 1000);
  */
 app.get('/payment-success', (req, res) => {
     const { extension_id } = req.query;
-    console.log('💰 Payment success redirect for extension:', extension_id);
+    console.log('💰 Payment success (Auto Close) for extension:', extension_id);
 
-    // Fallback if extension_id is missing or invalid
-    if (!extension_id || extension_id === 'unknown' || extension_id === 'undefined') {
-        console.log('⚠️ No valid extension ID, serving auto-close page');
-        return res.send(`
+    // Serve a simple HTML page with auto-close functionality ONLY
+    res.send(`
 <!DOCTYPE html>
 <html>
 <head>
@@ -1623,48 +1715,6 @@ app.get('/payment-success', (req, res) => {
     </div>
     <script>
         setTimeout(function() { window.close(); }, 3000);
-    </script>
-</body>
-</html>
-        `);
-    }
-
-    // Serve a simple HTML page with auto-close functionality
-    res.send(`
-<!DOCTYPE html>
-<html>
-<head>
-    <title>Payment Successful</title>
-    <meta charset="utf-8">
-    <style>
-        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; text-align: center; padding: 50px; background: #f0fdf4; color: #166534; }
-        .container { max-width: 600px; margin: 0 auto; background: white; padding: 40px; border-radius: 12px; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1); }
-        h1 { color: #22c55e; margin-bottom: 10px; }
-        .icon { font-size: 64px; color: #22c55e; margin-bottom: 20px; }
-        .message { margin: 20px 0; font-size: 18px; color: #4b5563; }
-        .btn { display: inline-block; margin-top: 20px; padding: 12px 24px; background-color: #22c55e; color: white; text-decoration: none; border-radius: 6px; font-weight: 600; transition: background-color 0.2s; }
-        .btn:hover { background-color: #16a34a; }
-        .loader { border: 4px solid #f3f3f3; border-top: 4px solid #22c55e; border-radius: 50%; width: 30px; height: 30px; animation: spin 1s linear infinite; margin: 20px auto; }
-        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <div class="icon">✓</div>
-        <h1>Payment Successful!</h1>
-        <div class="message">
-            <p>Thank you! Your premium features are activated.</p>
-            <p>Redirecting you back to the extension...</p>
-        </div>
-        <div class="loader"></div>
-        <a href="chrome-extension://${extension_id}/options.html" class="btn">Open Extension Settings</a>
-    </div>
-    
-    <script>
-        console.log('Payment success. Redirecting to ${extension_id}...');
-        setTimeout(function() {
-            window.location.href = "chrome-extension://${extension_id}/options.html";
-        }, 2000);
     </script>
 </body>
 </html>
