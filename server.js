@@ -386,9 +386,12 @@ app.post('/api/admin/sync-all', verifyAdminToken, async (req, res) => {
  * List all users in database (admin endpoint)
  */
 app.get('/api/admin/users', (req, res) => {
-    console.log('📋 Admin: Listing all users');
+    const userCount = Object.keys(userSubscriptions).length;
+    console.log(`📋 Admin: Listing all users. Count: ${userCount}`);
+    console.log('📋 User emails:', Object.keys(userSubscriptions));
+
     res.json({
-        count: Object.keys(userSubscriptions).length,
+        count: userCount,
         users: userSubscriptions
     });
 });
