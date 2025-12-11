@@ -1624,13 +1624,13 @@ app.get('/payment-success', (req, res) => {
             <p>Redirecting you back to the extension...</p>
         </div>
         <div class="loader"></div>
-        <a href="chrome-extension://gjcoamlnfodhenhedkfbbngclmggnbff/options.html" class="btn">Open Extension Settings</a>
+        <a href="chrome-extension://${extension_id}/options.html" class="btn">Open Extension Settings</a>
     </div>
     
     <script>
-        console.log('Payment success. Redirecting...');
+        console.log('Payment success. Redirecting to ${extension_id}...');
         setTimeout(function() {
-            window.location.href = "chrome-extension://gjcoamlnfodhenhedkfbbngclmggnbff/options.html";
+            window.location.href = "chrome-extension://${extension_id}/options.html";
         }, 2000);
     </script>
 </body>
