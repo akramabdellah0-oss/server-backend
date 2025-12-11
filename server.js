@@ -1604,42 +1604,34 @@ app.get('/payment-success', (req, res) => {
     <title>Payment Successful</title>
     <meta charset="utf-8">
     <style>
-        body { font-family: Arial, sans-serif; text-align: center; padding: 50px; background: #f0f8ff; }
-        .container { max-width: 600px; margin: 0 auto; background: white; padding: 30px; border-radius: 10px; box-shadow: 0 0 20px rgba(0,0,0,0.1); }
-        h1 { color: #28a745; }
-        .message { margin: 20px 0; font-size: 18px; }
-        .progress { width: 100%; height: 4px; background: #e0e0e0; border-radius: 2px; margin: 20px 0; overflow: hidden; }
-        .progress-bar { height: 100%; background: #28a745; width: 0%; animation: progress 3s linear forwards; }
-        @keyframes progress { to { width: 100%; } }
-        .note { background: #e8f5e9; padding: 15px; border-radius: 5px; margin: 20px 0; }
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; text-align: center; padding: 50px; background: #f0fdf4; color: #166534; }
+        .container { max-width: 600px; margin: 0 auto; background: white; padding: 40px; border-radius: 12px; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1); }
+        h1 { color: #22c55e; margin-bottom: 10px; }
+        .icon { font-size: 64px; color: #22c55e; margin-bottom: 20px; }
+        .message { margin: 20px 0; font-size: 18px; color: #4b5563; }
+        .btn { display: inline-block; margin-top: 20px; padding: 12px 24px; background-color: #22c55e; color: white; text-decoration: none; border-radius: 6px; font-weight: 600; transition: background-color 0.2s; }
+        .btn:hover { background-color: #16a34a; }
+        .loader { border: 4px solid #f3f3f3; border-top: 4px solid #22c55e; border-radius: 50%; width: 30px; height: 30px; animation: spin 1s linear infinite; margin: 20px auto; }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
     </style>
 </head>
 <body>
     <div class="container">
-        <h1>✅ Payment Successful!</h1>
+        <div class="icon">✓</div>
+        <h1>Payment Successful!</h1>
         <div class="message">
-            <p>Your payment has been processed successfully.</p>
-            <p>Your premium features will be activated automatically.</p>
+            <p>Thank you! Your premium features are activated.</p>
+            <p>Redirecting you back to the extension...</p>
         </div>
-        
-        <div class="progress">
-            <div class="progress-bar"></div>
-        </div>
-        
-        <div class="note">
-            <p>This page will close automatically. Your extension will refresh with premium features activated.</p>
-        </div>
+        <div class="loader"></div>
+        <a href="chrome-extension://gjcoamlnfodhenhedkfbbngclmggnbff/options.html" class="btn">Open Extension Settings</a>
     </div>
     
     <script>
-        // Notify the extension and close the tab automatically
-        console.log('Payment success page loaded. Activating premium features...');
-        
-        // Close the tab after 3 seconds
+        console.log('Payment success. Redirecting...');
         setTimeout(function() {
-            console.log('Closing payment success page...');
-            window.close();
-        }, 3000);
+            window.location.href = "chrome-extension://gjcoamlnfodhenhedkfbbngclmggnbff/options.html";
+        }, 2000);
     </script>
 </body>
 </html>
