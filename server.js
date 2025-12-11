@@ -1190,9 +1190,10 @@ app.post('/api/create-portal-session', async (req, res) => {
         console.log('👤 Found Stripe customer:', customer.id);
 
         // Create a portal session
+        const extId = req.body.extensionId || 'unknown';
         const portalSession = await stripe.billingPortal.sessions.create({
             customer: customer.id,
-            return_url: SERVER_URL + '/payment-success?portal_return=true'
+            return_url: SERVER_URL + '/payment-success?portal_return=true&extension_id=' + extId
         });
 
         console.log('✅ Portal session created:', portalSession.id);
@@ -1595,6 +1596,38 @@ setInterval(cleanupExpiredShares, 10 * 60 * 1000);
 app.get('/payment-success', (req, res) => {
     const { extension_id } = req.query;
     console.log('💰 Payment success redirect for extension:', extension_id);
+
+    // Fallback if extension_id is missing or invalid
+    if (!extension_id || extension_id === 'unknown' || extension_id === 'undefined') {
+        console.log('⚠️ No valid extension ID, serving auto-close page');
+        return res.send(`
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Payment Successful</title>
+    <meta charset="utf-8">
+    <style>
+        body { font-family: 'Segoe UI', sans-serif; text-align: center; padding: 50px; background: #f0fdf4; color: #166534; }
+        .container { max-width: 600px; margin: 0 auto; background: white; padding: 40px; border-radius: 12px; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1); }
+        h1 { color: #22c55e; margin-bottom: 10px; }
+        .message { margin: 20px 0; font-size: 18px; color: #4b5563; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Payment Successful!</h1>
+        <div class="message">
+            <p>Thank you! Your premium features are activated.</p>
+            <p>You can close this tab and return to the extension.</p>
+        </div>
+    </div>
+    <script>
+        setTimeout(function() { window.close(); }, 3000);
+    </script>
+</body>
+</html>
+        `);
+    }
 
     // Serve a simple HTML page with auto-close functionality
     res.send(`
