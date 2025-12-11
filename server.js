@@ -430,6 +430,7 @@ async function syncAllUsersWithStripe() {
                 userSubscriptions[email] = {
                     isPremium: true,
                     plan: planName,
+                    activatedAt: new Date(subscription.created * 1000).toISOString(),
                     syncedAt: new Date().toISOString(),
                     stripeCustomerId: customer.id,
                     stripeSubscriptionId: subscription.id,
