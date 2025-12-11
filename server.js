@@ -287,77 +287,99 @@ app.post('/api/admin/add-user', verifyAdminToken, (req, res) => {
 /**
  * Sync all users with Stripe
  */
-app.post('/api/admin/sync-all', verifyAdminToken, async (req, res) => {
+/**
+ * Sync all users with Stripe (Improved Logic)
+ * Scans ALL customers with active subscriptions directly from Stripe
+ */
+async function syncAllUsersWithStripe() {
     if (!stripe) {
-        return res.status(500).json({ error: 'Stripe not configured' });
+        console.log('⚠️ Stripe not configured, skipping sync.');
+        return { success: false, error: 'Stripe not configured' };
     }
 
-    console.log('🔄 Admin: Starting sync all users with Stripe');
-
+    console.log('🔄 START: Syncing all users with Stripe directly...');
     let synced = 0;
     let errors = 0;
+    let newUsers = 0;
 
-    const emails = Object.keys(userSubscriptions);
+    try {
+        // Fetch ALL active subscriptions directly
+        // We expand 'customer' to get email directly
+        const subscriptions = await stripe.subscriptions.list({
+            status: 'active',
+            limit: 100, // Fetch up to 100 active subs at once
+            expand: ['data.customer']
+        });
 
-    for (const email of emails) {
-        try {
-            const customers = await stripe.customers.list({ email, limit: 1 });
+        console.log(`🔎 Found ${subscriptions.data.length} active subscriptions in Stripe.`);
 
-            if (customers.data.length === 0) {
-                // No Stripe customer, downgrade to free
-                userSubscriptions[email] = {
-                    ...userSubscriptions[email],
-                    isPremium: false,
-                    plan: 'Free',
-                    syncedAt: new Date().toISOString()
-                };
-                synced++;
-                continue;
-            }
+        for (const subscription of subscriptions.data) {
+            try {
+                // Get customer email
+                const customer = subscription.customer;
 
-            const customer = customers.data[0];
-            const subscriptions = await stripe.subscriptions.list({
-                customer: customer.id,
-                status: 'active',
-                limit: 1
-            });
+                // Handle case where customer is expanded or just ID
+                const email = customer.email || (typeof customer === 'string' ? null : customer.id);
 
-            if (subscriptions.data.length === 0) {
-                userSubscriptions[email] = {
-                    ...userSubscriptions[email],
-                    isPremium: false,
-                    plan: 'Free',
-                    syncedAt: new Date().toISOString()
-                };
-            } else {
-                const subscription = subscriptions.data[0];
+                if (!email || !email.includes('@')) {
+                    console.log(`⚠️ Skipping subscription ${subscription.id}: Invalid customer email (${email}).`);
+                    continue;
+                }
+
+                // Determine Plan
                 const priceId = subscription.items.data[0]?.price?.id;
-                let planName = 'Pro';
+                let planName = 'Pro'; // Default fallback
 
                 if (priceId === 'price_1SXINCJdBDLWAyB09C5II34Q') {
                     planName = 'Plus';
                 } else if (priceId === 'price_1SXIM2JdBDLWAyB0cVOcC25x') {
                     planName = 'Pro';
+                } else {
+                    console.log(`ℹ️ Unknown price ID for ${email}: ${priceId}. Defaulting to Pro.`);
                 }
 
+                // Check if user is new
+                if (!userSubscriptions[email]) {
+                    newUsers++;
+                }
+
+                // Update Local Database
                 userSubscriptions[email] = {
-                    ...userSubscriptions[email],
                     isPremium: true,
                     plan: planName,
-                    syncedAt: new Date().toISOString()
+                    syncedAt: new Date().toISOString(),
+                    stripeCustomerId: customer.id,
+                    stripeSubscriptionId: subscription.id,
+                    status: 'active',
+                    installationId: customer.metadata?.installation_id || null
                 };
+
+                synced++;
+
+            } catch (err) {
+                console.error(`❌ Error processing subscription ${subscription.id}:`, err.message);
+                errors++;
             }
-            synced++;
-        } catch (error) {
-            console.error(`❌ Error syncing ${email}:`, error.message);
-            errors++;
         }
+
+        saveDataToFile();
+        console.log(`✅ SYNC COMPLETE: ${synced} users active. (${newUsers} new locally).`);
+        return { success: true, synced, newUsers, errors };
+
+    } catch (error) {
+        console.error('❌ FATAL SYNC ERROR:', error.message);
+        return { success: false, error: error.message };
     }
+}
 
-    saveDataToFile();
-    console.log(`✅ Admin: Synced ${synced} users, ${errors} errors`);
+// Auto-sync on startup (5 seconds after launch)
+if (stripe) {
+    setTimeout(syncAllUsersWithStripe, 5000);
+}
 
-    res.json({ success: true, synced, errors, total: emails.length });
+app.post('/api/admin/sync-all', verifyAdminToken, async (req, res) => {
+    const result = await syncAllUsersWithStripe();
+    res.json(result);
 });
 
 /**
