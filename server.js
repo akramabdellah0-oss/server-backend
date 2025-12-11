@@ -38,6 +38,60 @@ const verificationCodes = {};
 const userSubscriptions = {}; // Stores license status: { 'email@example.com': { isPremium: true, plan: 'Pro' } }
 const sharedRules = {};
 
+// --- ADMIN AUTHENTICATION ---
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin123'; // Change in production!
+const adminTokens = new Set(); // Store valid admin tokens
+
+function generateAdminToken() {
+    return crypto.randomBytes(32).toString('hex');
+}
+
+function verifyAdminToken(req, res, next) {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+        return res.status(401).json({ error: 'Authorization required' });
+    }
+    const token = authHeader.split(' ')[1];
+    if (!adminTokens.has(token)) {
+        return res.status(401).json({ error: 'Invalid or expired token' });
+    }
+    next();
+}
+
+// --- SERVER LOGGING SYSTEM ---
+const serverLogs = [];
+const MAX_LOGS = 200;
+
+function addLog(message) {
+    const logEntry = {
+        timestamp: new Date().toISOString(),
+        message: message
+    };
+    serverLogs.push(logEntry);
+    if (serverLogs.length > MAX_LOGS) {
+        serverLogs.shift(); // Remove oldest log
+    }
+}
+
+// Hook into console.log to capture logs
+const originalConsoleLog = console.log;
+console.log = function (...args) {
+    const message = args.map(arg =>
+        typeof arg === 'object' ? JSON.stringify(arg) : String(arg)
+    ).join(' ');
+    addLog(message);
+    originalConsoleLog.apply(console, args);
+};
+
+const originalConsoleError = console.error;
+console.error = function (...args) {
+    const message = '❌ ' + args.map(arg =>
+        typeof arg === 'object' ? JSON.stringify(arg) : String(arg)
+    ).join(' ');
+    addLog(message);
+    originalConsoleError.apply(console, args);
+};
+
 // --- SUBSCRIPTION DATA PERSISTENCE ---
 const DATA_FILE = path.join(__dirname, 'app_data.json');
 
@@ -128,6 +182,182 @@ app.get('/health', (req, res) => {
         uptime: process.uptime(),
         users: Object.keys(userSubscriptions).length
     });
+});
+
+// --- SERVE ADMIN DASHBOARD ---
+app.get('/admin', (req, res) => {
+    res.sendFile(path.join(__dirname, 'admin.html'));
+});
+
+// Serve static files for admin
+app.get('/admin.css', (req, res) => {
+    res.sendFile(path.join(__dirname, 'admin.css'));
+});
+
+app.get('/admin.js', (req, res) => {
+    res.sendFile(path.join(__dirname, 'admin.js'));
+});
+
+// --- ADMIN API ENDPOINTS ---
+
+/**
+ * Admin Login - returns a token if password is correct
+ */
+app.post('/api/admin/login', (req, res) => {
+    const { password } = req.body;
+    console.log('🔐 Admin login attempt');
+
+    if (password === ADMIN_PASSWORD) {
+        const token = generateAdminToken();
+        adminTokens.add(token);
+        console.log('✅ Admin login successful');
+        res.json({ success: true, token });
+    } else {
+        console.log('❌ Admin login failed - wrong password');
+        res.status(401).json({ success: false, error: 'Mot de passe incorrect' });
+    }
+});
+
+/**
+ * Verify admin token
+ */
+app.get('/api/admin/verify', verifyAdminToken, (req, res) => {
+    res.json({ success: true });
+});
+
+/**
+ * Get server statistics
+ */
+app.get('/api/admin/stats', verifyAdminToken, (req, res) => {
+    const totalUsers = Object.keys(userSubscriptions).length;
+    const premiumUsers = Object.values(userSubscriptions).filter(u => u.isPremium).length;
+    const memoryUsage = process.memoryUsage();
+
+    res.json({
+        totalUsers,
+        premiumUsers,
+        freeUsers: totalUsers - premiumUsers,
+        uptime: process.uptime(),
+        memoryMB: Math.round(memoryUsage.heapUsed / 1024 / 1024),
+        timestamp: new Date().toISOString()
+    });
+});
+
+/**
+ * Get server logs
+ */
+app.get('/api/admin/logs', verifyAdminToken, (req, res) => {
+    res.json({ logs: serverLogs });
+});
+
+/**
+ * Clear server logs
+ */
+app.delete('/api/admin/logs', verifyAdminToken, (req, res) => {
+    serverLogs.length = 0;
+    console.log('🗑️ Admin: Logs cleared');
+    res.json({ success: true });
+});
+
+/**
+ * Add a new user manually
+ */
+app.post('/api/admin/add-user', verifyAdminToken, (req, res) => {
+    const { email, plan } = req.body;
+
+    if (!email) {
+        return res.status(400).json({ error: 'Email is required' });
+    }
+
+    const isPremium = plan === 'Plus' || plan === 'Pro';
+
+    userSubscriptions[email] = {
+        isPremium,
+        plan: plan || 'Free',
+        activatedAt: new Date().toISOString(),
+        addedBy: 'admin'
+    };
+
+    saveDataToFile();
+    console.log(`✅ Admin: Added user ${email} with ${plan || 'Free'} plan`);
+
+    res.json({ success: true, user: userSubscriptions[email] });
+});
+
+/**
+ * Sync all users with Stripe
+ */
+app.post('/api/admin/sync-all', verifyAdminToken, async (req, res) => {
+    if (!stripe) {
+        return res.status(500).json({ error: 'Stripe not configured' });
+    }
+
+    console.log('🔄 Admin: Starting sync all users with Stripe');
+
+    let synced = 0;
+    let errors = 0;
+
+    const emails = Object.keys(userSubscriptions);
+
+    for (const email of emails) {
+        try {
+            const customers = await stripe.customers.list({ email, limit: 1 });
+
+            if (customers.data.length === 0) {
+                // No Stripe customer, downgrade to free
+                userSubscriptions[email] = {
+                    ...userSubscriptions[email],
+                    isPremium: false,
+                    plan: 'Free',
+                    syncedAt: new Date().toISOString()
+                };
+                synced++;
+                continue;
+            }
+
+            const customer = customers.data[0];
+            const subscriptions = await stripe.subscriptions.list({
+                customer: customer.id,
+                status: 'active',
+                limit: 1
+            });
+
+            if (subscriptions.data.length === 0) {
+                userSubscriptions[email] = {
+                    ...userSubscriptions[email],
+                    isPremium: false,
+                    plan: 'Free',
+                    syncedAt: new Date().toISOString()
+                };
+            } else {
+                const subscription = subscriptions.data[0];
+                const priceId = subscription.items.data[0]?.price?.id;
+                let planName = 'Pro';
+
+                if (priceId === 'price_1SXINCJdBDLWAyB09C5II34Q') {
+                    planName = 'Plus';
+                } else if (priceId === 'price_1SXIM2JdBDLWAyB0cVOcC25x') {
+                    planName = 'Pro';
+                }
+
+                userSubscriptions[email] = {
+                    ...userSubscriptions[email],
+                    isPremium: true,
+                    plan: planName,
+                    syncedAt: new Date().toISOString()
+                };
+            }
+            synced++;
+        } catch (error) {
+            console.error(`❌ Error syncing ${email}:`, error.message);
+            errors++;
+        }
+    }
+
+    saveDataToFile();
+    console.log(`✅ Admin: Synced ${synced} users, ${errors} errors`);
+
+    res.json({ success: true, synced, errors, total: emails.length });
 });
 
 /**

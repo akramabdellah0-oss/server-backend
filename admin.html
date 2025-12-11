@@ -1,0 +1,282 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Admin Dashboard - Autofill Pro</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="stylesheet" href="admin.css">
+</head>
+
+<body class="admin-page">
+    <!-- Login Container -->
+    <div class="login-container" id="loginContainer">
+        <div class="login-box">
+            <div class="login-logo">
+                <i class="fas fa-shield-alt"></i>
+                <h1>Admin Dashboard</h1>
+                <p>Autofill Pro Management Console</p>
+            </div>
+            <div class="login-error" id="loginError">
+                <i class="fas fa-exclamation-circle"></i>
+                <span id="loginErrorText">Mot de passe incorrect</span>
+            </div>
+            <form class="login-form" id="loginForm">
+                <div class="form-group">
+                    <label for="adminPassword">Mot de passe Admin</label>
+                    <input type="password" id="adminPassword" placeholder="Entrez le mot de passe" required>
+                </div>
+                <button type="submit" class="btn btn-primary" style="width: 100%; justify-content: center;">
+                    <i class="fas fa-sign-in-alt"></i>
+                    Connexion
+                </button>
+            </form>
+        </div>
+    </div>
+
+    <!-- Admin Container -->
+    <div class="admin-container" id="adminContainer">
+        <!-- Header -->
+        <header class="admin-header">
+            <div class="admin-logo">
+                <i class="fas fa-shield-alt"></i>
+                <h1>Admin Dashboard</h1>
+                <span>Pro</span>
+            </div>
+            <nav class="admin-nav">
+                <button class="active" data-panel="dashboard">
+                    <i class="fas fa-chart-line"></i>
+                    Dashboard
+                </button>
+                <button data-panel="clients">
+                    <i class="fas fa-users"></i>
+                    Clients
+                </button>
+                <button data-panel="logs">
+                    <i class="fas fa-terminal"></i>
+                    Logs
+                </button>
+            </nav>
+            <div class="admin-actions">
+                <div class="server-status">
+                    <span class="status-dot"></span>
+                    <span>Serveur en ligne</span>
+                </div>
+                <button class="btn-logout" id="btnLogout">
+                    <i class="fas fa-sign-out-alt"></i>
+                    Déconnexion
+                </button>
+            </div>
+        </header>
+
+        <!-- Main Content -->
+        <main class="admin-main">
+            <!-- Dashboard Panel -->
+            <div class="admin-panel active" id="panelDashboard">
+                <!-- Stats Grid -->
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <div class="stat-icon blue">
+                            <i class="fas fa-users"></i>
+                        </div>
+                        <div class="stat-info">
+                            <h3 id="statTotalUsers">0</h3>
+                            <p>Total Utilisateurs</p>
+                        </div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-icon green">
+                            <i class="fas fa-crown"></i>
+                        </div>
+                        <div class="stat-info">
+                            <h3 id="statPremiumUsers">0</h3>
+                            <p>Utilisateurs Premium</p>
+                        </div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-icon yellow">
+                            <i class="fas fa-clock"></i>
+                        </div>
+                        <div class="stat-info">
+                            <h3 id="statUptime">0h</h3>
+                            <p>Uptime Serveur</p>
+                        </div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-icon purple">
+                            <i class="fas fa-memory"></i>
+                        </div>
+                        <div class="stat-info">
+                            <h3 id="statMemory">0 MB</h3>
+                            <p>Mémoire Utilisée</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Quick Actions -->
+                <div class="panel-card">
+                    <div class="panel-header">
+                        <h2><i class="fas fa-bolt"></i> Actions Rapides</h2>
+                    </div>
+                    <div style="padding: 24px; display: flex; gap: 16px; flex-wrap: wrap;">
+                        <button class="btn btn-primary" id="btnRefreshStats">
+                            <i class="fas fa-sync-alt"></i>
+                            Rafraîchir Stats
+                        </button>
+                        <button class="btn btn-secondary" id="btnSyncAllUsers">
+                            <i class="fas fa-cloud-download-alt"></i>
+                            Sync Stripe
+                        </button>
+                        <button class="btn btn-danger" id="btnClearLogs">
+                            <i class="fas fa-trash"></i>
+                            Vider Logs
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Clients Panel -->
+            <div class="admin-panel" id="panelClients">
+                <div class="panel-card">
+                    <div class="panel-header">
+                        <h2><i class="fas fa-users"></i> Gestion des Clients</h2>
+                        <div class="panel-actions">
+                            <div class="search-input">
+                                <i class="fas fa-search"></i>
+                                <input type="text" id="searchClients" placeholder="Rechercher un client...">
+                            </div>
+                            <button class="btn btn-success" id="btnAddClient">
+                                <i class="fas fa-plus"></i>
+                                Ajouter Client
+                            </button>
+                            <button class="btn btn-secondary" id="btnRefreshClients">
+                                <i class="fas fa-sync-alt"></i>
+                            </button>
+                        </div>
+                    </div>
+                    <div class="table-container">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Email</th>
+                                    <th>Plan</th>
+                                    <th>Statut</th>
+                                    <th>Date d'activation</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="clientsTableBody">
+                                <!-- Clients will be loaded here -->
+                            </tbody>
+                        </table>
+                    </div>
+                    <div class="empty-state" id="noClientsMessage" style="display: none;">
+                        <i class="fas fa-users-slash"></i>
+                        <h3>Aucun client trouvé</h3>
+                        <p>Ajoutez votre premier client ou modifiez votre recherche</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Logs Panel -->
+            <div class="admin-panel" id="panelLogs">
+                <div class="panel-card">
+                    <div class="panel-header">
+                        <h2><i class="fas fa-terminal"></i> Logs du Serveur</h2>
+                        <div class="panel-actions">
+                            <button class="btn btn-secondary" id="btnAutoRefreshLogs">
+                                <i class="fas fa-play"></i>
+                                Auto-Refresh
+                            </button>
+                            <button class="btn btn-secondary" id="btnRefreshLogs">
+                                <i class="fas fa-sync-alt"></i>
+                                Rafraîchir
+                            </button>
+                            <button class="btn btn-danger" id="btnClearLogsPanel">
+                                <i class="fas fa-trash"></i>
+                                Vider
+                            </button>
+                        </div>
+                    </div>
+                    <div class="logs-container" id="logsContainer">
+                        <div class="empty-state" id="noLogsMessage">
+                            <i class="fas fa-scroll"></i>
+                            <h3>Aucun log disponible</h3>
+                            <p>Les logs du serveur apparaîtront ici</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <!-- Add Client Modal -->
+    <div class="modal-overlay" id="addClientModal">
+        <div class="modal">
+            <div class="modal-header">
+                <h3><i class="fas fa-user-plus"></i> Ajouter un Client</h3>
+                <button class="modal-close" onclick="closeModal('addClientModal')">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+            <div class="modal-body">
+                <form id="addClientForm">
+                    <div class="form-group">
+                        <label for="newClientEmail">Email</label>
+                        <input type="email" id="newClientEmail" placeholder="client@example.com" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="newClientPlan">Plan</label>
+                        <select id="newClientPlan">
+                            <option value="Free">Free</option>
+                            <option value="Plus">Plus</option>
+                            <option value="Pro">Pro</option>
+                        </select>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeModal('addClientModal')">Annuler</button>
+                <button class="btn btn-success" id="btnConfirmAddClient">
+                    <i class="fas fa-check"></i>
+                    Ajouter
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Confirm Delete Modal -->
+    <div class="modal-overlay" id="deleteClientModal">
+        <div class="modal">
+            <div class="modal-header">
+                <h3><i class="fas fa-exclamation-triangle" style="color: var(--admin-danger);"></i> Confirmer la
+                    suppression</h3>
+                <button class="modal-close" onclick="closeModal('deleteClientModal')">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+            <div class="modal-body">
+                <p>Êtes-vous sûr de vouloir supprimer le client <strong id="deleteClientEmail"></strong> ?</p>
+                <p style="color: var(--admin-text-muted); margin-top: 12px;">Cette action est irréversible.</p>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeModal('deleteClientModal')">Annuler</button>
+                <button class="btn btn-danger" id="btnConfirmDeleteClient">
+                    <i class="fas fa-trash"></i>
+                    Supprimer
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Toast -->
+    <div class="toast" id="toast">
+        <i class="fas fa-check-circle"></i>
+        <span id="toastMessage">Action réussie</span>
+    </div>
+
+    <script src="admin.js"></script>
+</body>
+
+</html>
