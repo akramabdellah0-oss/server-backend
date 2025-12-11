@@ -262,26 +262,109 @@ app.delete('/api/admin/logs', verifyAdminToken, (req, res) => {
 /**
  * Add a new user manually
  */
-app.post('/api/admin/add-user', verifyAdminToken, (req, res) => {
+/**
+ * Add a new user manually (Persisted via Stripe)
+ * Creates a Stripe Customer + Subscription with 100% OFF Coupon
+ */
+app.post('/api/admin/add-user', verifyAdminToken, async (req, res) => {
     const { email, plan } = req.body;
 
     if (!email) {
         return res.status(400).json({ error: 'Email is required' });
     }
 
-    const isPremium = plan === 'Plus' || plan === 'Pro';
+    const validPlan = (plan === 'Plus' || plan === 'Pro') ? plan : 'Free';
+    console.log(`👤 Admin adding user: ${email} (${validPlan}) via Stripe...`);
 
-    userSubscriptions[email] = {
-        isPremium,
-        plan: plan || 'Free',
-        activatedAt: new Date().toISOString(),
-        addedBy: 'admin'
-    };
+    // Fallback if Stripe not configured
+    if (!stripe) {
+        console.warn('⚠️ Stripe not configured. Adding locally only (will be lost on restart).');
+        userSubscriptions[email] = {
+            isPremium: validPlan !== 'Free',
+            plan: validPlan,
+            activatedAt: new Date().toISOString(),
+            addedBy: 'admin',
+            note: 'Local only (Stripe missing)'
+        };
+        saveDataToFile();
+        return res.json({ success: true, user: userSubscriptions[email], warning: 'Stripe unavailable, not persisted.' });
+    }
 
-    saveDataToFile();
-    console.log(`✅ Admin: Added user ${email} with ${plan || 'Free'} plan`);
+    try {
+        // 1. Find or Create Customer
+        let customer;
+        const existingCustomers = await stripe.customers.list({ email, limit: 1 });
 
-    res.json({ success: true, user: userSubscriptions[email] });
+        if (existingCustomers.data.length > 0) {
+            customer = existingCustomers.data[0];
+            console.log(`✓ Found existing Stripe customer: ${customer.id}`);
+        } else {
+            customer = await stripe.customers.create({
+                email,
+                metadata: { source: 'admin_dashboard', added_by: 'admin' }
+            });
+            console.log(`✓ Created new Stripe customer: ${customer.id}`);
+        }
+
+        // 2. If Premium, Create Subscription with Coupon
+        if (validPlan !== 'Free') {
+            // Ensure 100% OFF Coupon exists
+            const COUPON_ID = 'ADMIN_OFFER_FREE';
+            try {
+                await stripe.coupons.retrieve(COUPON_ID);
+            } catch (err) {
+                console.log('ℹ️ Creating 100% OFF coupon...');
+                await stripe.coupons.create({
+                    id: COUPON_ID,
+                    duration: 'forever',
+                    percent_off: 100,
+                    name: 'Offre Admin (Gratuit à vie)'
+                });
+            }
+
+            const priceId = validPlan === 'Plus'
+                ? 'price_1SXINCJdBDLWAyB09C5II34Q'
+                : 'price_1SXIM2JdBDLWAyB0cVOcC25x';
+
+            // Check if already subscribed to avoid duplicates
+            const existingSubs = await stripe.subscriptions.list({
+                customer: customer.id,
+                status: 'active',
+                limit: 1
+            });
+
+            if (existingSubs.data.length === 0) {
+                await stripe.subscriptions.create({
+                    customer: customer.id,
+                    items: [{ price: priceId }],
+                    coupon: COUPON_ID,
+                    metadata: { source: 'admin_dashboard' }
+                });
+                console.log(`✓ Created FREE subscription for ${email}`);
+            } else {
+                console.log(`ℹ️ User already has active subscription: ${existingSubs.data[0].id}`);
+            }
+        }
+
+        // 3. Update Local DB immediately
+        userSubscriptions[email] = {
+            isPremium: validPlan !== 'Free',
+            plan: validPlan,
+            activatedAt: new Date().toISOString(),
+            stripeCustomerId: customer.id,
+            status: 'active',
+            source: 'admin_stripe_sync'
+        };
+
+        console.log(`✅ Admin: Successfully added/synced ${email}`);
+        saveDataToFile();
+
+        res.json({ success: true, user: userSubscriptions[email] });
+
+    } catch (error) {
+        console.error('❌ Error adding user to Stripe:', error.message);
+        res.status(500).json({ error: `Stripe Error: ${error.message}` });
+    }
 });
 
 /**
@@ -354,6 +437,7 @@ async function syncAllUsersWithStripe() {
                     installationId: customer.metadata?.installation_id || null
                 };
 
+                console.log(`➕ Added user to local DB: ${email} (${planName})`);
                 synced++;
 
             } catch (err) {
