@@ -146,6 +146,9 @@
                                 <i class="fas fa-search"></i>
                                 <input type="text" id="searchClients" placeholder="Rechercher un client...">
                             </div>
+                            <button class="btn btn-secondary" id="btnSyncClientsPanel" title="Sync All from Stripe">
+                                <i class="fas fa-cloud-download-alt"></i>
+                            </button>
                             <button class="btn btn-success" id="btnAddClient">
                                 <i class="fas fa-plus"></i>
                                 Ajouter Client
@@ -265,6 +268,36 @@
                 <button class="btn btn-danger" id="btnConfirmDeleteClient">
                     <i class="fas fa-trash"></i>
                     Supprimer
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Edit Client Modal -->
+    <div class="modal-overlay" id="editClientModal">
+        <div class="modal">
+            <div class="modal-header">
+                <h3><i class="fas fa-edit" style="color: var(--admin-info);"></i> Edit Client Plan</h3>
+                <button class="modal-close" onclick="closeModal('editClientModal')">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+            <div class="modal-body">
+                <p>Change plan for <strong id="editClientEmail"></strong></p>
+                <div class="form-group" style="margin-top: 16px;">
+                    <label for="editClientPlan">Select Plan</label>
+                    <select id="editClientPlan">
+                        <option value="Free">Free</option>
+                        <option value="Plus">Plus</option>
+                        <option value="Pro">Pro</option>
+                    </select>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeModal('editClientModal')">Cancel</button>
+                <button class="btn btn-info" id="btnConfirmEditClient" onclick="confirmEditClient()">
+                    <i class="fas fa-save"></i>
+                    Save
                 </button>
             </div>
         </div>

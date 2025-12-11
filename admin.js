@@ -39,6 +39,8 @@ function setupEventListeners() {
     // Dashboard actions
     document.getElementById('btnRefreshStats').addEventListener('click', loadStats);
     document.getElementById('btnSyncAllUsers').addEventListener('click', syncAllUsers);
+    const btnSyncPanel = document.getElementById('btnSyncClientsPanel');
+    if (btnSyncPanel) btnSyncPanel.addEventListener('click', syncAllUsers);
     document.getElementById('btnClearLogs').addEventListener('click', clearLogs);
 
     // Clients actions
@@ -238,15 +240,18 @@ function renderClients(clients) {
             </td>
             <td>
                 <span class="badge badge-${client.isPremium ? 'active' : 'inactive'}">
-                    ${client.isPremium ? 'Actif' : 'Inactif'}
+                    ${client.isPremium ? 'Active' : 'Inactive'}
                 </span>
             </td>
-            <td>${client.activatedAt ? formatDate(client.activatedAt) : '-'}</td>
+            <td>${formatDate(client.activatedAt || client.verifiedAt || client.syncedAt || client.lastPayment)}</td>
             <td class="action-btns">
-                <button class="btn btn-secondary btn-sm" onclick="syncClient('${escapeHtml(client.email)}')" title="Synchroniser avec Stripe">
+                <button class="btn btn-info btn-sm" onclick="editClient('${escapeHtml(client.email)}', '${client.plan || 'Free'}')" title="Edit Plan">
+                    <i class="fas fa-edit"></i>
+                </button>
+                <button class="btn btn-secondary btn-sm" onclick="syncClient('${escapeHtml(client.email)}')" title="Sync with Stripe">
                     <i class="fas fa-sync"></i>
                 </button>
-                <button class="btn btn-danger btn-sm" onclick="deleteClient('${escapeHtml(client.email)}')" title="Supprimer">
+                <button class="btn btn-danger btn-sm" onclick="deleteClient('${escapeHtml(client.email)}')" title="Delete">
                     <i class="fas fa-trash"></i>
                 </button>
             </td>
@@ -336,7 +341,46 @@ async function confirmDeleteClient() {
         }
     } catch (error) {
         console.error('Error deleting client:', error);
-        showToast('Erreur lors de la suppression', 'error');
+        showToast('Error deleting client', 'error');
+    }
+}
+
+// Edit Client - Change Plan
+let currentEditEmail = null;
+
+function editClient(email, currentPlan) {
+    currentEditEmail = email;
+    document.getElementById('editClientEmail').textContent = email;
+    document.getElementById('editClientPlan').value = currentPlan;
+    openModal('editClientModal');
+}
+
+async function confirmEditClient() {
+    if (!currentEditEmail) return;
+
+    const newPlan = document.getElementById('editClientPlan').value;
+
+    try {
+        // Use force-activate endpoint to update the plan
+        const response = await fetch(`${API_BASE}/api/force-activate?email=${encodeURIComponent(currentEditEmail)}&plan=${newPlan}`, {
+            method: 'GET',
+            headers: { 'Authorization': `Bearer ${adminToken}` }
+        });
+
+        const data = await response.json();
+
+        if (data.success) {
+            showToast(`Client ${currentEditEmail} updated to ${newPlan}!`, 'success');
+            closeModal('editClientModal');
+            currentEditEmail = null;
+            loadClients();
+            loadStats();
+        } else {
+            showToast(data.error || 'Error updating client', 'error');
+        }
+    } catch (error) {
+        console.error('Error editing client:', error);
+        showToast('Error updating client', 'error');
     }
 }
 
@@ -366,7 +410,7 @@ async function syncAllUsers() {
     try {
         showToast('Synchronisation de tous les utilisateurs...', 'success');
 
-        const response = await fetch(`${API_BASE}/api/admin/sync-all`, {
+        const response = await fetch(`${API_BASE}/api/admin/sync-stripe-customers`, {
             method: 'POST',
             headers: { 'Authorization': `Bearer ${adminToken}` }
         });
@@ -549,7 +593,9 @@ function escapeHtml(text) {
 }
 
 function formatDate(dateString) {
+    if (!dateString) return '-';
     const date = new Date(dateString);
+    if (isNaN(date.getTime())) return '-';
     return date.toLocaleDateString('fr-FR', {
         day: '2-digit',
         month: '2-digit',
