@@ -777,7 +777,7 @@ app.post('/api/send-verification-code', sendCodeLimiter, async (req, res) => {
 
         const mailOptions = {
             // IMPORTANT: Use a verified sender email in SendGrid
-            from: { name: 'Autofill App', email: process.env.EMAIL_FROM || 'noreply@yourverifieddomain.com' },
+            from: { name: 'Autofill App', email: process.env.EMAIL_FROM || 'akramabdellah0@gmail.com' },
             to: email,
             subject: 'Your Verification Code',
             text: `Your verification code is: ${code}\n\nThis code will expire in 10 minutes.`,
