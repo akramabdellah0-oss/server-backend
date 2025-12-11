@@ -166,7 +166,7 @@ if (STRIPE_SECRET_KEY) {
 // Rate limiter to prevent abuse
 const sendCodeLimiter = rateLimit({
     windowMs: 15 * 60 * 1000, // 15 minutes
-    max: 5, // Limit each IP to 5 requests per windowMs
+    max: 100, // Relaxed limit for testing (was 5)
     message: "Too many requests, please try again later.",
 });
 
