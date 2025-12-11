@@ -848,6 +848,149 @@ app.post('/api/verify-code', (req, res) => {
     res.json({ success: true, message: 'E-mail vérifié avec succès.' });
 });
 
+// ============================================
+// SHARE RULE ENDPOINTS (Popup Notification)
+// ============================================
+
+/**
+ * Share a rule with another user
+ * POST /api/share-rule
+ */
+app.post('/api/share-rule', (req, res) => {
+    const { fromEmail, toEmail, rule, expireMinutes = 60 } = req.body;
+
+    if (!fromEmail || !toEmail || !rule) {
+        return res.status(400).json({ error: 'fromEmail, toEmail, and rule are required' });
+    }
+
+    // Generate unique share ID
+    const shareId = crypto.randomBytes(16).toString('hex');
+    const expiresAt = Date.now() + (expireMinutes * 60 * 1000);
+
+    // Store the shared rule
+    if (!sharedRules[toEmail]) {
+        sharedRules[toEmail] = [];
+    }
+
+    sharedRules[toEmail].push({
+        shareId,
+        fromEmail,
+        rule,
+        expiresAt,
+        createdAt: Date.now(),
+        accepted: false
+    });
+
+    console.log(`📤 Rule shared from ${fromEmail} to ${toEmail} (ID: ${shareId})`);
+    saveDataToFile();
+
+    res.json({
+        success: true,
+        shareId,
+        message: `Rule shared with ${toEmail}`
+    });
+});
+
+/**
+ * Check for pending shared rules for a user
+ * GET /api/check-shared-rules/:email
+ */
+app.get('/api/check-shared-rules/:email', (req, res) => {
+    const email = decodeURIComponent(req.params.email);
+
+    // Clean up expired shares
+    if (sharedRules[email]) {
+        sharedRules[email] = sharedRules[email].filter(share => {
+            if (share.expiresAt < Date.now()) {
+                console.log(`🗑️ Expired share removed for ${email} (ID: ${share.shareId})`);
+                return false;
+            }
+            return true;
+        });
+    }
+
+    const pendingShares = (sharedRules[email] || []).filter(share => !share.accepted);
+
+    console.log(`📥 Checking shared rules for ${email}: ${pendingShares.length} pending`);
+
+    res.json({
+        success: true,
+        pendingShares: pendingShares.map(share => ({
+            shareId: share.shareId,
+            fromEmail: share.fromEmail,
+            rule: share.rule,
+            createdAt: share.createdAt,
+            expiresAt: share.expiresAt
+        }))
+    });
+});
+
+/**
+ * Accept a shared rule
+ * POST /api/accept-shared-rule/:shareId
+ */
+app.post('/api/accept-shared-rule/:shareId', (req, res) => {
+    const { shareId } = req.params;
+    const { email } = req.body;
+
+    if (!email) {
+        return res.status(400).json({ error: 'Email required' });
+    }
+
+    if (!sharedRules[email]) {
+        return res.status(404).json({ error: 'No shared rules found for this email' });
+    }
+
+    const shareIndex = sharedRules[email].findIndex(share => share.shareId === shareId);
+
+    if (shareIndex === -1) {
+        return res.status(404).json({ error: 'Shared rule not found or expired' });
+    }
+
+    // Mark as accepted
+    sharedRules[email][shareIndex].accepted = true;
+    const acceptedRule = sharedRules[email][shareIndex];
+
+    console.log(`✅ Rule accepted by ${email} (ID: ${shareId})`);
+    saveDataToFile();
+
+    res.json({
+        success: true,
+        rule: acceptedRule.rule,
+        fromEmail: acceptedRule.fromEmail,
+        message: 'Rule accepted successfully'
+    });
+});
+
+/**
+ * Decline/Delete a shared rule
+ * DELETE /api/shared-rule/:shareId
+ */
+app.delete('/api/shared-rule/:shareId', (req, res) => {
+    const { shareId } = req.params;
+    const { email } = req.body;
+
+    if (!email) {
+        return res.status(400).json({ error: 'Email required' });
+    }
+
+    if (!sharedRules[email]) {
+        return res.status(404).json({ error: 'No shared rules found' });
+    }
+
+    const originalLength = sharedRules[email].length;
+    sharedRules[email] = sharedRules[email].filter(share => share.shareId !== shareId);
+
+    if (sharedRules[email].length === originalLength) {
+        return res.status(404).json({ error: 'Shared rule not found' });
+    }
+
+    console.log(`🗑️ Shared rule declined by ${email} (ID: ${shareId})`);
+    saveDataToFile();
+
+    res.json({ success: true, message: 'Shared rule removed' });
+});
+
 /**
  * 3. Check License Status (Called by App.tsx)
  * NOW VERIFIES AGAINST STRIPE IN REAL-TIME
