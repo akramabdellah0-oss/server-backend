@@ -15,7 +15,7 @@ require('dotenv').config();
 const app = express();
 
 // --- SERVER URL CONFIGURATION ---
-const SERVER_URL = process.env.SERVER_URL || 'https://thoughtful-liza-laguasetta-ac137d0b.koyeb.app';
+const SERVER_URL = process.env.SERVER_URL || (process.env.RAILWAY_PUBLIC_DOMAIN ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}` : 'https://thoughtful-liza-laguasetta-ac137d0b.koyeb.app');
 console.log('🌐 Server URL:', SERVER_URL);
 
 // --- FIX FOR KOYEB/LOAD BALANCERS ---
