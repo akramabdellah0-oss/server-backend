@@ -14,6 +14,12 @@ require('dotenv').config();
 
 const app = express();
 
+// --- DEBUG: LOG ENVIRONMENT VARIABLES ---
+console.log('🔍 ENVIRONMENT DEBUG:');
+console.log('   Active Keys:', Object.keys(process.env).join(', '));
+console.log('   RAILWAY_PUBLIC_DOMAIN:', process.env.RAILWAY_PUBLIC_DOMAIN);
+console.log('-----------------------------');
+
 // --- SERVER URL CONFIGURATION ---
 const SERVER_URL = process.env.SERVER_URL || (process.env.RAILWAY_PUBLIC_DOMAIN ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}` : 'https://thoughtful-liza-laguasetta-ac137d0b.koyeb.app');
 console.log('🌐 Server URL:', SERVER_URL);
